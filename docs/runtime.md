@@ -5,6 +5,19 @@ The root `mdd` package provides `Application`, `Context`, `Object` and the
 and initializes configured items. Import a driver package to register its
 connection scheme; the memory driver is registered by default.
 
+Applications that use SQLite can import `github.com/metadata-driven/mdd/driver/sqlite`
+for its registration side effect. The SQLite module requires Go 1.26.0. The
+root module requires Go 1.24.0.
+
+From the repository root, run the root and SQLite tests separately.
+
+```sh
+GOWORK=off go test ./...
+(cd driver/sqlite && GOWORK=off go test ./...)
+```
+
+The root suite includes MySQL tests that expect a local `testdb` database.
+
 An application owns its connections. Use `app.Execute` to run work in a typed
 context; the context is created and closed by the application. Objects and sets
 are bound to that context and must not be used after it closes. A

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/metadata-driven/mdd/driver"
+	"github.com/metadata-driven/mdd/driver/internal/drivertest"
 	_ "github.com/metadata-driven/mdd/driver/sqlite"
 )
 
@@ -304,4 +305,12 @@ func TestBinaryOrderPagination(t *testing.T) {
 	if !slices.Equal(got, []uint64{2, 3, 1}) {
 		t.Fatalf("binary order = %v", got)
 	}
+}
+
+func TestFileAndBinaryTransactions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data.sqlite")
+	drivertest.FileAndBinaryTransactions(t, path, "records", drivertest.FileOptions{
+		Reopen:        true,
+		LiveFileReads: true,
+	})
 }
