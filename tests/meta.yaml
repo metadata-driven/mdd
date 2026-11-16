@@ -1,0 +1,173 @@
+project:
+  name: shop-example
+  title: Shop Example
+
+sources:
+  - name: main
+    title: In-memory storage
+    conn: 'mem:'
+  - name: files
+    title: File storage
+    conn: 'files:/tmp/mdd-storage'
+
+models:
+  - name: user
+    title: '@{login} ({name})'
+    description: '{preferredStatus}'
+    icon: '{type.icon}'
+    source: main
+    set: users
+    attrs:
+      - name: created
+        type: datetime
+
+      - name: active
+        type: bool
+
+      - name: login
+        type: string(25)
+        index: regular
+
+      - name: name
+        type: string
+
+      - name: birthday
+        type: datetime
+
+      - name: score
+        type: int
+
+      - name: avatar
+        type: file
+
+      - name: token
+        type: binary
+
+      - name: online
+        type: bool
+
+      - name: last_seen
+        type: datetime
+
+      - name: latitude
+        type: number(9,6)
+
+      - name: longitude
+        type: number(9,6)
+
+      - name: manager
+        type: user
+
+      - name: best_friends
+        type: user[]
+
+      - name: tags
+        type: string[]
+
+      - name: type
+        type: enum
+        index: regular
+        items:
+          - name: admin
+            id: 1
+            title: Administrator
+            icon: 🤠
+          - name: user
+            id: 2
+            title: User
+            icon: 👤
+          - name: guest
+            id: 3
+            title: Guest
+            icon: 👻
+
+      - name: previous_type
+        type: user.type
+
+      - name: permissions
+        type: enum[]
+        items:
+          - name: manage_users
+            title: Manage users
+          - name: manage_orders
+            title: Manage orders
+          - name: impersonate_users
+            title: Impersonate users
+
+      - name: orders
+        type: set<order>
+        query: 'from(orders) where(user={id}) order(ts)'
+
+      - name: recent_orders
+        type: set<order>
+        query: 'where(user={id}) where(status=placed) order(ts desc) limit(3)'
+
+      - name: preferred_orders
+        type: set<order>
+        query: 'where(user={id}) where(status={preferredStatus}) order(ts)'
+
+    items:
+      - name: super_admin
+        id: 1
+        title: Super administrator
+        description: Built-in administrator account
+        icon: 👑
+        data:
+          login: root
+          name: Root
+          active: true
+          type: admin
+          permissions: [ manage_users, manage_orders, impersonate_users ]
+
+  - name: order
+    title: 'Order@{user.login}#{id} {amount}'
+    icon: '{status.icon}'
+    source: main
+    set: orders
+    attrs:
+      - name: ts
+        type: datetime
+        index: regular
+
+      - name: user
+        type: user
+
+      - name: valid_for
+        type: user.type
+
+      - name: status
+        type: enum
+        items:
+          - name: draft
+            title: Draft
+            icon: 📝
+          - name: placed
+            title: Placed
+            icon: ✅
+          - name: cancelled
+            title: Cancelled
+            icon: ❌
+      - name: currency
+        type: enum
+        items:
+          - name: usd
+            title: USD
+            description: United States dollar
+            icon: '$'
+          - name: eur
+            title: EUR
+            description: Euro
+            icon: '€'
+          - name: gbp
+            title: GBP
+            description: Pound sterling
+            icon: '£'
+
+      - name: amount
+        type: number(12,2)
+
+      - name: paid
+        type: bool
+
+    indexes:
+      - attrs: [ user, ts ]
