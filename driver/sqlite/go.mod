@@ -3,7 +3,7 @@ module github.com/metadata-driven/mdd/driver/sqlite
 go 1.26.0
 
 require (
-	github.com/metadata-driven/mdd v0.0.0-20261116143742-cbf4be5d292c
+	github.com/metadata-driven/mdd v0.0.0-20261116145002-2ca02a711784
 	modernc.org/sqlite v1.61.1
 )
 
@@ -19,5 +19,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
-
-replace github.com/metadata-driven/mdd => ../..
