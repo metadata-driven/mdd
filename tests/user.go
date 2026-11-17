@@ -13,6 +13,9 @@ type User struct {
 var _ = mdd.RegisterModel[User](Meta, "user")
 
 func (ctx *Context) Users() *mdd.Set[User] { return mdd.NewSet[User](ctx) }
+func (ctx *Context) UserByID(id uint64) *User {
+	return ctx.Users().Get(id)
+}
 
 var UserSuperAdmin = mdd.Item[User](Meta, "user.super_admin")
 
@@ -31,7 +34,7 @@ func (u *User) LastSeen() Time                 { return mdd.Attr[Time](u, "last_
 func (u *User) Latitude() float64              { return mdd.Attr[float64](u, "latitude") }
 func (u *User) Longitude() float64             { return mdd.Attr[float64](u, "longitude") }
 func (u *User) Manager() *User                 { return mdd.Attr[*User](u, "manager") }
-func (u *User) BestFriends() []*User           { return mdd.Attr[[]*User](u, "best_friends") }
+func (u *User) Friends() []*User               { return mdd.Attr[[]*User](u, "friends") }
 func (u *User) Tags() []string                 { return mdd.Attr[[]string](u, "tags") }
 func (u *User) Type() *UserType                { return mdd.Attr[*UserType](u, "type") }
 func (u *User) PreviousType() *UserType        { return mdd.Attr[*UserType](u, "previous_type") }
@@ -50,7 +53,7 @@ func (u *User) SetLastSeen(v Time) *User                 { return mdd.SetAttr(u,
 func (u *User) SetLatitude(v float64) *User              { return mdd.SetAttr(u, "latitude", v) }
 func (u *User) SetLongitude(v float64) *User             { return mdd.SetAttr(u, "longitude", v) }
 func (u *User) SetManager(v *User) *User                 { return mdd.SetAttr(u, "manager", v) }
-func (u *User) SetBestFriends(v []*User) *User           { return mdd.SetAttr(u, "best_friends", v) }
+func (u *User) SetFriends(v []*User) *User               { return mdd.SetAttr(u, "friends", v) }
 func (u *User) SetTags(v []string) *User                 { return mdd.SetAttr(u, "tags", v) }
 func (u *User) SetType(v *UserType) *User                { return mdd.SetAttr(u, "type", v) }
 func (u *User) SetPreviousType(v *UserType) *User        { return mdd.SetAttr(u, "previous_type", v) }
@@ -60,9 +63,9 @@ func (u *User) Orders() *mdd.Set[Order]          { return mdd.AttrSet[Order](u, 
 func (u *User) RecentOrders() *mdd.Set[Order]    { return mdd.AttrSet[Order](u, "recent_orders") }
 func (u *User) PreferredOrders() *mdd.Set[Order] { return mdd.AttrSet[Order](u, "preferred_orders") }
 
-func (ctx *Context) UserByID(id uint64) *User {
-	return ctx.Users().Get(id)
-}
+func (u *User) IsAdmin() bool { return u.Type() == UserTypeAdmin }
+func (u *User) IsUser() bool  { return u.Type() == UserTypeUser }
+func (u *User) IsGuest() bool { return u.Type() == UserTypeGuest }
 
 func (u *User) OnCommit() {
 	if u == nil {

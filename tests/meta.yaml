@@ -58,7 +58,7 @@ models:
       - name: manager
         type: user
 
-      - name: best_friends
+      - name: friends
         type: user[]
 
       - name: tags

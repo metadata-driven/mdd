@@ -421,7 +421,7 @@ func (o *Order) User() *User {
 
 `Attr` uses metadata to read scalar values, model references and collections.
 For example, `mdd.Attr[[]string](user, "tags")` reads strings and
-`mdd.Attr[[]*User](user, "best_friends")` resolves model references. The
+`mdd.Attr[[]*User](user, "friends")` resolves model references. The
 requested Go model type must be registered for the model named by the
 attribute. A null or zero reference returns nil. A nonzero reference returns a
 lazy object, including when the record is missing; `Deleted` checks its primary
