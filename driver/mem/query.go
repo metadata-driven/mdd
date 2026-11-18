@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/metadata-driven/mdd/driver"
+	"github.com/metadata-driven/mdd/driver/internal/query"
 )
 
 func numeric(v any) (*big.Rat, error) {
@@ -177,10 +178,11 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 	if q.Extra != nil {
 		return "", fmt.Errorf("mem: extended queries are not supported")
 	}
-	tab, index, err := t.conn.schema.ResolveQuery(q.Table, q.Index)
+	plan, err := query.Resolve(t.conn.schema, q)
 	if err != nil {
 		return "", fmt.Errorf("mem: %w", err)
 	}
+	tab, index := plan.Sources[0].Table, plan.Index
 	rows, err := t.table(tab.Name)
 	if err != nil {
 		return "", err
@@ -192,18 +194,25 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 			order[i] = driver.QueryOrder{Column: name}
 		}
 	}
-	colType := func(name string) (driver.DataType, error) {
-		if name == "id" {
-			return driver.TypeID, nil
+	type columnKey struct {
+		path string
+		name string
+	}
+	columns := make(map[columnKey]query.Column)
+	colType := func(path, name string) (driver.DataType, error) {
+		key := columnKey{path, name}
+		if col, ok := columns[key]; ok {
+			return col.Type, nil
 		}
-		col := tab.ColumnByName(name)
-		if col == nil {
-			return 0, fmt.Errorf("mem: unknown column %q", name)
+		col, err := plan.Column(path, name)
+		if err != nil {
+			return 0, fmt.Errorf("mem: %w", err)
 		}
+		columns[key] = col
 		return col.Type, nil
 	}
 	for _, item := range order {
-		typ, e := colType(item.Column)
+		typ, e := colType(item.Path, item.Column)
 		if e != nil {
 			return "", e
 		}
@@ -216,7 +225,7 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		if op == "" {
 			op = driver.OpEqual
 		}
-		typ, e := colType(f.Column)
+		typ, e := colType(f.Path, f.Column)
 		if e != nil {
 			return "", e
 		}
@@ -238,7 +247,7 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 	filters := make([]driver.QueryFilter, len(q.Filters))
 	copy(filters, q.Filters)
 	for i := range filters {
-		typ, _ := colType(filters[i].Column)
+		typ, _ := colType(filters[i].Path, filters[i].Column)
 		if typ == driver.TypeBinary || typ == driver.TypeFile {
 			filters[i].Values = make([]any, len(q.Filters[i].Values))
 			for j, value := range q.Filters[i].Values {
@@ -250,11 +259,43 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 			}
 		}
 	}
-	value := func(id uint64, name string) any {
-		if name == "id" {
-			return id
+	var sourceRow func(uint64, int) (uint64, driver.DataObject, error)
+	sourceRow = func(id uint64, source int) (uint64, driver.DataObject, error) {
+		if source == 0 {
+			return id, rows[id], nil
 		}
-		return rows[id][name]
+		join := plan.Sources[source]
+		parentID, parent, err := sourceRow(id, join.Parent)
+		if err != nil || parent == nil {
+			return 0, nil, err
+		}
+		reference := any(parentID)
+		if join.Key != "id" {
+			reference = parent[join.Key]
+		}
+		if reference == nil {
+			return 0, nil, nil
+		}
+		targetID, ok := reference.(uint64)
+		if !ok {
+			number, err := numeric(reference)
+			if err != nil || !number.IsInt() || !number.Num().IsUint64() {
+				return 0, nil, fmt.Errorf("mem: invalid join ID %v in %s", reference, join.Key)
+			}
+			targetID = number.Num().Uint64()
+		}
+		return targetID, t.state.Tables[join.Table.Name][targetID], nil
+	}
+	value := func(id uint64, path, name string) (any, error) {
+		col := columns[columnKey{path, name}]
+		joinedID, row, err := sourceRow(id, col.Source)
+		if err != nil || row == nil {
+			return nil, err
+		}
+		if col.Name == "id" {
+			return joinedID, nil
+		}
+		return row[col.Name], nil
 	}
 	ids := make([]uint64, 0, len(rows))
 	for id := range rows {
@@ -263,14 +304,17 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		}
 		matched := true
 		for _, f := range filters {
-			typ, _ := colType(f.Column)
+			typ, _ := colType(f.Path, f.Column)
 			op := f.Op
 			if op == "" {
 				op = driver.OpEqual
 			}
 			anyMatch := op == driver.OpNotEqual
 			for _, target := range f.Values {
-				v := value(id, f.Column)
+				v, err := value(id, f.Path, f.Column)
+				if err != nil {
+					return "", err
+				}
 				if target == nil {
 					target = driver.DefaultValue(typ)
 				}
@@ -321,8 +365,18 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 	sort.Slice(ids, func(i, j int) bool {
 		for _, item := range order {
 			name := item.Column
-			typ, _ := colType(name)
-			cmp, e := compare(value(ids[i], name), value(ids[j], name), typ)
+			typ, _ := colType(item.Path, name)
+			left, e := value(ids[i], item.Path, name)
+			if e != nil {
+				sortErr = e
+				return ids[i] < ids[j]
+			}
+			right, e := value(ids[j], item.Path, name)
+			if e != nil {
+				sortErr = e
+				return ids[i] < ids[j]
+			}
+			cmp, e := compare(left, right, typ)
 			if e != nil {
 				sortErr = e
 				return ids[i] < ids[j]

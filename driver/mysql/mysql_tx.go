@@ -15,6 +15,7 @@ import (
 	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/goldic/js"
 	"github.com/metadata-driven/mdd/driver"
+	queryplan "github.com/metadata-driven/mdd/driver/internal/query"
 )
 
 type transaction struct {
@@ -361,22 +362,21 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 	if query.Extra != nil {
 		return "", fmt.Errorf("mysql: extended queries are not supported")
 	}
-	tab, idx, err := t.conn.scheme.ResolveQuery(query.Table, query.Index)
+	plan, err := queryplan.Resolve(t.conn.scheme, query)
 	if err != nil {
 		return "", fmt.Errorf("mysql: %w", err)
 	}
-	column := func(name string) error {
-		if name != "id" && tab.ColumnByName(name) == nil {
-			return fmt.Errorf("mysql: unknown column %q", name)
-		}
-		return nil
-	}
+	idx := plan.Index
+	from := plan.FromSQL(escName)
+	idColumn, _ := plan.Column("", "id")
+	idSQL := idColumn.SQL(escName)
 	var where []string
 	var args []any
 	for _, f := range query.Filters {
 		name := f.Column
-		if err = column(name); err != nil {
-			return "", err
+		col, err := plan.Column(f.Path, name)
+		if err != nil {
+			return "", fmt.Errorf("mysql: %w", err)
 		}
 		op := f.Op
 		if op == "" {
@@ -402,23 +402,19 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 		}
 		var clauses []string
 		for _, value := range f.Values {
-			if name != "id" && tab.ColumnByName(name).Type == driver.TypeFile {
+			if col.Type == driver.TypeFile {
 				value, err = driver.FileBytes(value)
 				if err != nil {
 					return "", err
 				}
 			}
 			if value == nil {
-				typ := driver.TypeID
-				if name != "id" {
-					typ = tab.ColumnByName(name).Type
-				}
-				value = driver.DefaultValue(typ)
+				value = driver.DefaultValue(col.Type)
 			}
 			if op == driver.OpMatch {
-				clauses = append(clauses, "LOCATE(?, "+escName(name)+") > 0")
+				clauses = append(clauses, "LOCATE(?, "+col.SQL(escName)+") > 0")
 			} else {
-				clauses = append(clauses, escName(name)+op+"?")
+				clauses = append(clauses, col.SQL(escName)+op+"?")
 			}
 			args = append(args, value)
 		}
@@ -434,14 +430,17 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 			order = append(order, driver.QueryOrder{Column: name})
 		}
 	}
-	if len(order) == 0 || order[len(order)-1].Column != "id" {
+	if len(order) == 0 || order[len(order)-1].Path != "" || order[len(order)-1].Column != "id" {
 		desc := len(order) > 0 && order[len(order)-1].Desc
 		order = append(order, driver.QueryOrder{Column: "id", Desc: desc})
 	}
-	for _, item := range order {
-		if err = column(item.Column); err != nil {
-			return "", err
+	orderSQL := make([]string, len(order))
+	for i, item := range order {
+		col, err := plan.Column(item.Path, item.Column)
+		if err != nil {
+			return "", fmt.Errorf("mysql: %w", err)
 		}
+		orderSQL[i] = col.SQL(escName)
 	}
 	offsetID := uint64(0)
 	if query.Offset != "" {
@@ -454,17 +453,17 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 		var alternatives []string
 		for i, item := range order {
 			var parts []string
-			for j := 0; j < i; j++ {
-				name := escName(order[j].Column)
-				parts = append(parts, name+"<=>(SELECT "+name+" FROM "+escName(tab.Name)+" WHERE id=?)")
+			for j := range i {
+				name := orderSQL[j]
+				parts = append(parts, name+"<=>(SELECT "+name+" FROM "+from+" WHERE "+idSQL+"=?)")
 				args = append(args, offsetID)
 			}
 			op := ">"
 			if item.Desc {
 				op = "<"
 			}
-			name := escName(item.Column)
-			cursor := "(SELECT " + name + " FROM " + escName(tab.Name) + " WHERE id=?)"
+			name := orderSQL[i]
+			cursor := "(SELECT " + name + " FROM " + from + " WHERE " + idSQL + "=?)"
 			nullCondition := name + " IS NOT NULL AND " + cursor + " IS NULL"
 			if item.Desc {
 				nullCondition = name + " IS NULL AND " + cursor + " IS NOT NULL"
@@ -475,8 +474,8 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 		}
 		where = append(where, "("+strings.Join(alternatives, " OR ")+")")
 	}
-	b := bytes.NewBufferString("SELECT id FROM ")
-	b.WriteString(escName(tab.Name))
+	b := bytes.NewBufferString("SELECT " + idSQL + " FROM ")
+	b.WriteString(from)
 	if len(where) != 0 {
 		b.WriteString(" WHERE ")
 		b.WriteString(strings.Join(where, " AND "))
@@ -486,7 +485,7 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(escName(item.Column))
+		b.WriteString(orderSQL[i])
 		if item.Desc {
 			b.WriteString(" DESC")
 		}
@@ -539,11 +538,6 @@ func (t *transaction) traceSQL(q string) string {
 	}
 	return q
 }
-
-//func (t *transaction) Subscribe(*driver.Subscription) (err error) {
-//	// todo:.......
-//	return
-//}
 
 var (
 	replEscName = strings.NewReplacer(".", "__", "`", "-")

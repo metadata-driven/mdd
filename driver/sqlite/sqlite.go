@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/metadata-driven/mdd/driver"
+	"github.com/metadata-driven/mdd/driver/internal/query"
 	sqlite "modernc.org/sqlite"
 )
 
@@ -779,28 +780,21 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 	if q.Extra != nil {
 		return "", errors.New("sqlite: extended queries are not supported")
 	}
-	tab, idx, err := t.c.schema.ResolveQuery(q.Table, q.Index)
+	plan, err := query.Resolve(t.c.schema, q)
 	if err != nil {
 		return "", fmt.Errorf("sqlite: %w", err)
 	}
-	table := tab.Name
-	column := func(name string) (*driver.Column, error) {
-		if name == "id" {
-			return &driver.Column{Name: "id", Type: driver.TypeID}, nil
-		}
-		c := tab.ColumnByName(name)
-		if c == nil {
-			return nil, fmt.Errorf("sqlite: unknown column %q", name)
-		}
-		return c, nil
-	}
+	idx := plan.Index
+	from := plan.FromSQL(quote)
+	idColumn, _ := plan.Column("", "id")
+	idSQL := idColumn.SQL(quote)
 	var where []string
 	var args []any
 	for _, f := range q.Filters {
 		name := f.Column
-		col, e := column(name)
+		col, e := plan.Column(f.Path, name)
 		if e != nil {
-			return "", e
+			return "", fmt.Errorf("sqlite: %w", e)
 		}
 		if col.Type == driver.TypeJSON {
 			return "", errors.New("sqlite: JSON filters are not supported")
@@ -830,14 +824,14 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		var clauses []string
 		for _, v := range f.Values {
 
-			val, e := argument(v, col)
+			val, e := argument(v, col.Column)
 			if e != nil {
 				return "", e
 			}
 			if op == driver.OpMatch {
-				clauses = append(clauses, "instr("+quote(name)+",?)>0")
+				clauses = append(clauses, "instr("+col.SQL(quote)+",?)>0")
 			} else {
-				clauses = append(clauses, quote(name)+op+"?")
+				clauses = append(clauses, col.SQL(quote)+op+"?")
 			}
 			args = append(args, val)
 		}
@@ -860,18 +854,18 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 	var keys []sortKey
 	for _, item := range order {
 		name := item.Column
-		col, e := column(name)
+		col, e := plan.Column(item.Path, name)
 		if e != nil {
-			return "", e
+			return "", fmt.Errorf("sqlite: %w", e)
 		}
 		if col.Type == driver.TypeJSON {
 			return "", errors.New("sqlite: cannot order JSON")
 		}
-		keys = append(keys, sortKey{quote(name), item.Desc})
+		keys = append(keys, sortKey{col.SQL(quote), item.Desc})
 	}
-	if len(order) == 0 || order[len(order)-1].Column != "id" {
+	if len(order) == 0 || order[len(order)-1].Path != "" || order[len(order)-1].Column != "id" {
 		desc := len(order) > 0 && order[len(order)-1].Desc
-		keys = append(keys, sortKey{quote("id"), desc})
+		keys = append(keys, sortKey{idSQL, desc})
 	}
 	offset := uint64(0)
 	if q.Offset != "" {
@@ -885,14 +879,14 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		for i, key := range keys {
 			var parts []string
 			for j := 0; j < i; j++ {
-				parts = append(parts, keys[j].expr+" IS (SELECT "+keys[j].expr+" FROM "+quote(table)+" WHERE id=?)")
+				parts = append(parts, keys[j].expr+" IS (SELECT "+keys[j].expr+" FROM "+from+" WHERE "+idSQL+"=?)")
 				args = append(args, offset)
 			}
 			op := ">"
 			if key.desc {
 				op = "<"
 			}
-			cursor := "(SELECT " + key.expr + " FROM " + quote(table) + " WHERE id=?)"
+			cursor := "(SELECT " + key.expr + " FROM " + from + " WHERE " + idSQL + "=?)"
 			nullCondition := key.expr + " IS NOT NULL AND " + cursor + " IS NULL"
 			if key.desc {
 				nullCondition = key.expr + " IS NULL AND " + cursor + " IS NOT NULL"
@@ -903,7 +897,7 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		}
 		where = append(where, "("+strings.Join(alternatives, " OR ")+")")
 	}
-	query := "SELECT id FROM " + quote(table)
+	query := "SELECT " + idSQL + " FROM " + from
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}

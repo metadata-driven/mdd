@@ -5,6 +5,7 @@ import (
 	"maps"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/metadata-driven/mdd/driver"
@@ -47,43 +48,105 @@ func (s *schema) convertQuery(q *xquery.Query) *driver.Query {
 	if q.Offset != nil {
 		result.Offset = fmt.Sprint(q.Offset)
 	}
-	field := func(name string) *metaAttribute {
-		attr := tab.Attrs[name]
-		if name == "id" {
-			return attr
-		}
-		if attr == nil || attr.column == nil || attr.table != tab {
-			panic(fmt.Errorf("mdd: unknown query field %s.%s", tab.Name, name))
-		}
-		return attr
-	}
 	for _, condition := range q.Where {
 		name := condition.Field.String()
-		attr := field(name)
-		typ := driver.TypeID
-		if name != "id" {
-			typ = attr.column.Type
-		}
-		values := make([]any, len(condition.Values))
-		for i, value := range condition.Values {
-			if attr != nil && attr.Type().Target.Kind() == meta.KindEnum {
-				if itemName, ok := value.(string); ok {
-					for _, item := range attr.Type().Target.(meta.Enum).Items() {
-						if item.Name() == itemName || item.Path() == itemName {
-							value = item.ItemID()
-							break
-						}
-					}
-				}
-			}
-			values[i] = driver.Cast(typ, value)
-		}
-		result.AddFilter(name, condition.Op, values...)
+		result.Filters = append(result.Filters, s.queryFilter(tab, result, name, condition.Op, condition.Values))
 	}
 	for _, order := range q.Order {
 		name := order.Field.String()
-		field(name)
-		result.Order = append(result.Order, driver.QueryOrder{Column: name, Desc: order.Desc})
+		path, column, _ := s.resolveQueryField(tab, result, name)
+		result.Order = append(result.Order, driver.QueryOrder{Path: path, Column: column, Desc: order.Desc})
+	}
+	return result
+}
+
+// resolveQueryField follows model references, adds the required joins, and
+// returns the source path, local column name, and attribute metadata.
+func (s *schema) resolveQueryField(root *metaTable, query *driver.Query, name string) (string, string, *metaAttribute) {
+	if name == "" {
+		panic(fmt.Errorf("mdd: empty query field on %s", root.Name))
+	}
+	current := root
+	parts := strings.Split(name, ".")
+	// A physical main-table column takes precedence over a reference path.
+	if attr := root.Attrs[name]; attr != nil && attr.column != nil && attr.table != nil && attr.table.Table == root.Table {
+		return "", attr.column.Name, attr
+	}
+	for i, part := range parts {
+		if part == "id" && i == len(parts)-1 {
+			return strings.Join(parts[:i], "."), "id", nil
+		}
+		attr := current.Attrs[part]
+		if attr == nil || attr.column == nil || attr.table == nil || attr.table.Table == nil {
+			panic(fmt.Errorf("mdd: unknown query field %s.%s", current.Name, part))
+		}
+		if attr.table.Database != root.Database {
+			panic(fmt.Errorf("mdd: query field %s.%s is stored in a different database", root.Name, name))
+		}
+		if attr.table.Table != current.Table {
+			panic(fmt.Errorf("mdd: query field %s.%s is not stored in its model's primary table", root.Name, name))
+		}
+		if i == len(parts)-1 {
+			return strings.Join(parts[:i], "."), attr.column.Name, attr
+		}
+		info := attr.Type()
+		if info.Collection || info.Set || info.Target == nil || info.Target.Kind() != meta.KindModel {
+			panic(fmt.Errorf("mdd: query path %s.%s is not a single model reference", root.Name, strings.Join(parts[:i+1], ".")))
+		}
+		target := s.tables[info.Target.Path()]
+		if target == nil || target.Table == nil || target.Database == nil {
+			panic(fmt.Errorf("mdd: query reference %s has no storage table", info.Target.Path()))
+		}
+		if target.Database != root.Database {
+			panic(fmt.Errorf("mdd: query path %s.%s joins different databases", root.Name, strings.Join(parts[:i+1], ".")))
+		}
+		addQueryJoins(query, driver.QueryJoin{Path: strings.Join(parts[:i+1], "."), Table: target.Table.Name})
+		current = target
+	}
+	panic(fmt.Errorf("mdd: invalid query field %s.%s", root.Name, name))
+}
+
+func (s *schema) queryFilter(root *metaTable, query *driver.Query, name, op string, values []any) driver.QueryFilter {
+	path, column, attr := s.resolveQueryField(root, query, name)
+	return driver.QueryFilter{Path: path, Column: column, Op: op, Values: castQueryValues(attr, values)}
+}
+
+func addQueryJoins(query *driver.Query, joins ...driver.QueryJoin) {
+	for _, join := range joins {
+		found := false
+		for _, existing := range query.Joins {
+			if existing.Path == join.Path {
+				if existing.Table != join.Table {
+					panic(fmt.Errorf("mdd: conflicting query join %s", join.Path))
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			query.Joins = append(query.Joins, join)
+		}
+	}
+}
+
+func castQueryValues(attr *metaAttribute, values []any) []any {
+	typ := driver.TypeID
+	if attr != nil {
+		typ = attr.column.Type
+	}
+	result := make([]any, len(values))
+	for i, value := range values {
+		if attr != nil && attr.Type().Target != nil && attr.Type().Target.Kind() == meta.KindEnum {
+			if itemName, ok := value.(string); ok {
+				for _, item := range attr.Type().Target.(meta.Enum).Items() {
+					if item.Name() == itemName || item.Path() == itemName {
+						value = item.ItemID()
+						break
+					}
+				}
+			}
+		}
+		result[i] = driver.Cast(typ, value)
 	}
 	return result
 }

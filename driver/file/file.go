@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/metadata-driven/mdd/driver"
+	"github.com/metadata-driven/mdd/driver/internal/query"
 	"github.com/metadata-driven/mdd/driver/mem"
 )
 
@@ -495,23 +496,27 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		return "", err
 	}
 	if q != nil {
-		table, index, err := t.conn.schema.ResolveQuery(q.Table, q.Index)
+		plan, err := query.Resolve(t.conn.schema, q)
 		if err != nil {
 			return "", fmt.Errorf("file: %w", err)
 		}
-		var names []string
-		for _, item := range q.Order {
-			names = append(names, item.Column)
-		}
+		index := plan.Index
+		columns := append([]driver.QueryOrder(nil), q.Order...)
 		for _, filter := range q.Filters {
-			names = append(names, filter.Column)
+			columns = append(columns, driver.QueryOrder{Path: filter.Path, Column: filter.Column})
 		}
 		if index != nil && len(q.Order) == 0 {
-			names = append(names, index.Columns...)
+			for _, name := range index.Columns {
+				columns = append(columns, driver.QueryOrder{Column: name})
+			}
 		}
-		for _, name := range names {
-			if col := table.ColumnByName(name); col != nil && col.Type == driver.TypeFile {
-				return "", fmt.Errorf("file: file field %s.%s cannot be queried", table.Name, name)
+		for _, item := range columns {
+			col, err := plan.Column(item.Path, item.Column)
+			if err != nil {
+				return "", fmt.Errorf("file: %w", err)
+			}
+			if col.Type == driver.TypeFile {
+				return "", fmt.Errorf("file: file field %q at path %q cannot be queried", item.Column, item.Path)
 			}
 		}
 	}

@@ -80,12 +80,50 @@ value returned by `Fetch` for the last delivered record, not a row count.
 `Extra` is reserved for driver-specific queries; the current drivers reject it.
 Driver `Fetch` returns record IDs.
 
+`Joins` adds left joins to tables in the same database. Each `QueryJoin` names
+the target `Table` and a unique reference `Path` from the main table. The last
+path segment is a parent column of type `TypeID`, matched against the target's
+primary `id`. Declare parent joins before their children. Drivers generate SQL
+aliases internally. For example:
+
+```go
+query := &driver.Query{
+    Table: "orders",
+    Joins: []driver.QueryJoin{
+        {Path: "user", Table: "users"},
+        {Path: "user.manager", Table: "users"},
+    },
+    Filters: []driver.QueryFilter{
+        {Path: "user", Column: "active", Op: driver.OpEqual, Values: []any{true}},
+    },
+    Order: []driver.QueryOrder{{Path: "user.manager", Column: "name"}},
+}
+```
+
+`QueryFilter.Path` and `QueryOrder.Path` identify a declared join, or the main
+table when empty. `Column` always contains the local column name, including
+names containing dots. A joined primary key uses its join path and `Column: "id"`.
+`Query.AddFilter` adds a filter on the main table. Missing references preserve the main record and
+supply NULL joined fields. Filters apply after joining, so comparisons against
+missing joined fields do not match. Ascending order places missing joined
+fields first, and descending order places them last. Pagination and callbacks
+use the main record's ID. Joins are supported by mem, JSON, YAML, file, MySQL,
+and SQLite drivers, with each driver's existing field-query restrictions.
+
 `Set.Query` adds conditions and ordering from an xquery expression. The set's
 model is the default `from`, and `{...}` expressions are evaluated against the
 application context. Existing conditions and ordering remain first; specified
 nonzero limits and nonempty offsets replace the previous values. Use `Limit(0)`
 or `Offset("")` to clear them. Queries without `{...}` expressions are cached
 per application schema and source; each set receives its own query values.
+
+Reference fields such as `user.manager.name` in `Set.Query`, `Filter`, `Where`,
+`Order`, and `FindBy` are resolved through model metadata. The schema adds the
+required joins and separates the join path from the local column name before
+executing the driver query. Repeated paths share one join. Every reference must
+be a single model reference stored in the model's primary table, and every
+joined table must belong to the same database. `FindOrAdd` initializes the new
+object from equality filters on the main table.
 
 ```go
 orders := ctx.Orders().Query("where(status=placed) order(ts desc)")
@@ -97,10 +135,13 @@ orders = mdd.NewQuery[Order](ctx, "where(status=placed) order(ts desc)")
 It evaluates `{...}` expressions against the object using its Go methods and
 stored attributes, parses the result with `xquery`, and translates its
 filters, ordering, limit and offset into a driver query. Each call creates an
-independent set. The current translation supports model sets and stored fields
-in the model's primary table; `select`, nested paths and computed query fields
-are not supported and cause a panic. The chosen driver can impose additional
-query restrictions.
+independent set. Query fields may follow single model references, for example
+`where(user.type=admin) order(user.manager.name)`. MDD resolves their paths from
+the metadata and adds the required left joins. `Where`, `Filter`, `FindBy` and
+`Order` also accept these paths. Joins must stay within one database, and each
+referenced field must be stored in its model's primary table. Collections,
+computed query fields and `select` are not supported and cause a panic. The
+chosen driver can impose additional query restrictions.
 
 Metadata stores presentation and query expressions as strings without parsing
 them. `Application.Open` compiles and caches the templates, reporting syntax

@@ -2,6 +2,8 @@ module github.com/metadata-driven/mdd/driver/sqlite
 
 go 1.26.0
 
+replace github.com/metadata-driven/mdd => ../..
+
 require (
 	github.com/metadata-driven/mdd v0.0.0-20261116145002-2ca02a711784
 	modernc.org/sqlite v1.61.1

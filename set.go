@@ -104,6 +104,7 @@ func (s *Set[T]) Delete() {
 
 func (s *Set[T]) copyQuery() *driver.Query {
 	q := *s.query
+	q.Joins = slices.Clone(s.query.Joins)
 	q.Filters = slices.Clone(s.query.Filters)
 	q.Order = slices.Clone(s.query.Order)
 	return &q
@@ -147,6 +148,7 @@ func (s *Set[T]) Query(expr string) *Set[T] {
 		return nil
 	}
 	q := s.ctx.parseQuery(expr, s.tab.Table.Name, s.ctx.getSelf())
+	addQueryJoins(s.query, q.Joins...)
 	s.query.Filters = append(s.query.Filters, q.Filters...)
 	s.query.Order = append(s.query.Order, q.Order...)
 	if q.Limit != 0 {
@@ -163,29 +165,14 @@ func (s *Set[T]) Where(name, op string, values ...any) *Set[T] {
 	if s == nil {
 		return nil
 	}
-	s.query.AddFilter(name, op, s.filterValues(name, values)...)
+	filter := s.ctx.schema.queryFilter(s.tab, s.query, name, op, values)
+	s.query.Filters = append(s.query.Filters, filter)
 	return s
 }
 
 // Filter adds an equality condition. Multiple values are alternatives.
 func (s *Set[T]) Filter(name string, values ...any) *Set[T] {
 	return s.Where(name, driver.OpEqual, values...)
-}
-
-func (s *Set[T]) filterValues(name string, values []any) []any {
-	typ := driver.TypeID
-	if name != "id" {
-		attr := s.tab.Attrs[name]
-		if attr == nil || attr.column == nil {
-			panic(fmt.Errorf("mdd: unknown stored attribute %s.%s", s.tab.Name, name))
-		}
-		typ = attr.column.Type
-	}
-	result := make([]any, len(values))
-	for i, value := range values {
-		result[i] = driver.Cast(typ, value)
-	}
-	return result
 }
 
 // Order sets the sort columns. A leading minus sign selects descending order.
@@ -199,7 +186,8 @@ func (s *Set[T]) Order(names ...string) *Set[T] {
 		if name == "" {
 			panic("mdd: empty order column")
 		}
-		order = append(order, driver.QueryOrder{Column: name, Desc: desc})
+		path, column, _ := s.ctx.schema.resolveQueryField(s.tab, s.query, name)
+		order = append(order, driver.QueryOrder{Path: path, Column: column, Desc: desc})
 	}
 	s.query.Order = order
 	return s
@@ -277,7 +265,7 @@ func (s *Set[T]) FindOrAdd() *T {
 	result := s.Add()
 	object := any(result).(interface{ Set(string, any) })
 	for _, filter := range s.query.Filters {
-		if filter.Column != "id" && (filter.Op == "" || filter.Op == driver.OpEqual) && len(filter.Values) > 0 {
+		if filter.Path == "" && filter.Column != "id" && (filter.Op == "" || filter.Op == driver.OpEqual) && len(filter.Values) > 0 {
 			object.Set(filter.Column, filter.Values[0])
 		}
 	}
@@ -301,7 +289,8 @@ func (s *Set[T]) FindBy(name string, value any) *T {
 	}
 	query := s.copyQuery()
 	query.Filters = slices.Clone(query.Filters)
-	query.AddFilter(name, driver.OpEqual, s.filterValues(name, []any{value})...)
+	filter := s.ctx.schema.queryFilter(s.tab, query, name, driver.OpEqual, []any{value})
+	query.Filters = append(query.Filters, filter)
 	return s.first(query)
 }
 

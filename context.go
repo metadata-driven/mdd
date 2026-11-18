@@ -469,6 +469,7 @@ func (ctx *Context) parseQuery(queryExpr string, defaultFrom string, obj any) *d
 
 func copyCachedQuery(query *driver.Query) *driver.Query {
 	result := *query
+	result.Joins = slices.Clone(query.Joins)
 	result.Order = slices.Clone(query.Order)
 	result.Filters = slices.Clone(query.Filters)
 	for i := range result.Filters {
