@@ -256,10 +256,7 @@ func (s *Set[T]) Last() *T {
 }
 
 func (s *Set[T]) FindOrAdd() *T {
-	if s == nil {
-		return nil
-	}
-	if result := s.First(); result != nil {
+	if result := s.first(s.query); result != nil {
 		return result
 	}
 	result := s.Add()

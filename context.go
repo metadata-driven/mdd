@@ -309,6 +309,9 @@ func (ctx *Context) clearTxs() {
 	}
 	ctx.pending = nil
 	clear(ctx.commitWritten)
+	for _, obj := range ctx.commitQueue {
+		obj.isNew = false
+	}
 	clear(ctx.commitQueue)
 	ctx.commitQueue = ctx.commitQueue[:0]
 }

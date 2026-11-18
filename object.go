@@ -21,6 +21,7 @@ type Object struct {
 	id       uint64
 	data     driver.DataObject
 	changes  driver.DataObject
+	isNew    bool
 	loaded   bool
 	deleted  bool
 	deleting bool
@@ -41,6 +42,7 @@ func (o *Object) initObject(ctx *Context, tab *metaTable, id uint64) {
 	o.ctx = ctx
 	o.id = id
 	o.tab = tab
+	o.isNew = id == 0
 }
 
 func (o *Object) setAttribute(name string) (*Context, *metaAttribute, any) {
@@ -132,6 +134,13 @@ func (o *Object) ID() uint64 {
 		o.ctx.txGet(o.tab, o)
 	}
 	return o.id
+}
+
+// IsNew reports whether Add created this object in the current transaction.
+// It remains true after writes and throughout commit hooks, then becomes false
+// when commit or rollback completes. A nil object returns false.
+func (o *Object) IsNew() bool {
+	return o != nil && o.isNew
 }
 
 // UID returns the model path and object ID, separated by '#'.

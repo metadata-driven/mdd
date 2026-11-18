@@ -343,7 +343,7 @@ tracks the one object awaiting a flush, including attributes stored in different
 sources. It flushes those changes when changing another object, reading an
 uncached and unbuffered attribute, requesting an ID for a new object, executing
 a query, or committing. Cached reads do not flush. Reading an attribute of a new
-object without an ID returns nil, even if the attribute has been set. Reading a
+object without an ID returns nil when the attribute has not been set. Reading a
 buffered file attribute of a saved object flushes it before returning a reader.
 Rollback discards pending changes. Before a flush, non-file changes are merged
 into the object's cache; only the changed fields are sent to the driver. File
@@ -366,6 +366,19 @@ a missing record, while deleting one is a no-op.
 For a new object, it writes the object to obtain its ID, just like `ID()`.
 It returns an empty string when the object has no ID, including a nil object or
 an object deleted before it was written.
+
+`Object.IsNew()` reports whether `Add` created the object in the current
+transaction, including a new object returned by `FindOrAdd`. It remains true
+after assigning an ID, flushing changes, or deleting the object, and throughout
+`OnNew`, `OnCommit`, and `OnAfterCommit`. It becomes false when `Commit` or
+`Rollback` completes. Existing and predefined objects return false.
+
+```go
+user := ctx.Users().Filter("login", "alice").FindOrAdd()
+if user.IsNew() {
+    user.SetName("Alice")
+}
+```
 
 If a model declares a scalar `datetime` attribute named `created`, a new
 object's empty value is filled with the current time before its first write and
