@@ -1,5 +1,7 @@
 # MDD for Go
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/metadata-driven/mdd.svg)](https://pkg.go.dev/github.com/metadata-driven/mdd)
+
 A Go framework for building applications from [MDD metadata](https://github.com/metadata-driven/spec). It provides a runtime for models, transactions, queries, storage, templates, and application logic.
 
 ## What is MDD?
