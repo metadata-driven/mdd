@@ -18,6 +18,43 @@ GOWORK=off go test ./...
 
 The root suite includes MySQL tests that expect a local `testdb` database.
 
+## Generate Go models
+
+From the MDD repository, pass the directory containing the model package and
+its `meta.yaml` to the generator.
+
+```sh
+go run ./cmd/modelgen ./path/to/models
+```
+
+The generator reuses the existing Go package name, or derives it from the
+directory name. It creates missing model structs, registrations, typed set
+methods on `Context`, accessors, and predefined item variables. It uses
+`enums.go` for enum types and values when there is no existing group to extend.
+The generator also fills in the package setup. It creates missing `Meta`,
+`Context`, and `App` declarations, along with `NewApp() (*App, error)` and
+`(*Context).App() *App`. `NewApp` opens the application using `Meta`, which
+embeds and parses the YAML when generated.
+
+The generator reads declarations across the package, so a method can live in
+a separate file from its model. Existing getter, setter, and enum groups are
+extended in place. Commented-out methods stay disabled.
+New model types get commented examples of `OnNew`, `OnDelete`, `OnCommit`, and
+`OnAfterCommit`. Uncomment a hook and edit it like any hand-written method.
+
+A trailing `// mdd:generated` lets subsequent runs update that declaration.
+When an attribute, set, enum value, or predefined item is removed from the
+metadata, the generator removes the corresponding marked methods or variables.
+It also removes marked registrations for deleted models and enums. Remove the
+marker to take ownership of a declaration. Update any callers of removed
+declarations. The generator formats files it edits.
+
+The generated API follows the runtime's identifier and set support.
+Identifiers use `type: id`, and a queryable attribute targets a model with a
+canonical set.
+
+## Application and context
+
 An application owns its connections. Use `app.Execute` to run work in a typed
 context; the context is created and closed by the application. Objects and sets
 are bound to that context and must not be used after it closes. A
