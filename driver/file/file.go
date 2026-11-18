@@ -503,7 +503,7 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		index := plan.Index
 		columns := append([]driver.QueryOrder(nil), q.Order...)
 		for _, filter := range q.Filters {
-			columns = append(columns, driver.QueryOrder{Path: filter.Path, Column: filter.Column})
+			columns = append(columns, driver.QueryOrder{Source: filter.Source, Column: filter.Column})
 		}
 		if index != nil && len(q.Order) == 0 {
 			for _, name := range index.Columns {
@@ -511,12 +511,12 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 			}
 		}
 		for _, item := range columns {
-			col, err := plan.Column(item.Path, item.Column)
+			col, err := plan.Column(item.Source, item.Column)
 			if err != nil {
 				return "", fmt.Errorf("file: %w", err)
 			}
 			if col.Type == driver.TypeFile {
-				return "", fmt.Errorf("file: file field %q at path %q cannot be queried", item.Column, item.Path)
+				return "", fmt.Errorf("file: file field %q in source %q cannot be queried", item.Column, item.Source)
 			}
 		}
 	}

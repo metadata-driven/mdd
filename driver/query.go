@@ -12,28 +12,30 @@ type Query struct {
 	Extra   any           `json:"extra,omitempty"`
 }
 
-// QueryJoin adds a left join within the same database. Path is a dot-separated
-// reference path from the main table, such as "user" or "user.manager". Its
-// final segment names a TypeID column of the parent, matched against Table.id.
-// A parent join must precede its children, and paths must be unique.
+// QueryJoin adds a left join within the same database. Source identifies a
+// previously declared alias, or the main table when empty. Its TypeID Column
+// is matched against Table.id. Alias is required and must be unique and nonempty.
+// Aliases are opaque source names; SQL drivers generate their own SQL aliases.
 type QueryJoin struct {
-	Path  string `json:"path"`
-	Table string `json:"table"`
+	Source string `json:"source,omitempty"`
+	Column string `json:"column"`
+	Table  string `json:"table"`
+	Alias  string `json:"alias"`
 }
 
-// QueryOrder specifies a local column name and its sorting direction. Path
-// identifies a declared join, or the main table when empty.
+// QueryOrder specifies a local column name and its sorting direction. Source
+// identifies a declared alias, or the main table when empty.
 type QueryOrder struct {
-	Path   string `json:"path,omitempty"`
+	Source string `json:"source,omitempty"`
 	Column string `json:"column"`
 	Desc   bool   `json:"desc,omitempty"`
 }
 
-// QueryFilter compares a local column with values. Path identifies a declared
-// join, or the main table when empty. Filters apply after the left joins,
+// QueryFilter compares a local column with values. Source identifies a declared
+// alias, or the main table when empty. Filters apply after the left joins,
 // so comparisons against a missing joined record do not match.
 type QueryFilter struct {
-	Path   string `json:"path,omitempty"`
+	Source string `json:"source,omitempty"`
 	Column string `json:"column"`
 	Op     string `json:"op"`
 	Values []any  `json:"values"`
@@ -48,12 +50,3 @@ const (
 	OpLTE      = "<=" //
 	OpMatch    = "~"  // match text
 )
-
-// AddFilter appends a filter on a local column of the main table.
-func (q *Query) AddFilter(name, op string, val ...any) {
-	q.Filters = append(q.Filters, QueryFilter{
-		Column: name,
-		Op:     op,
-		Values: val,
-	})
-}

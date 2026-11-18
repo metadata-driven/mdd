@@ -1,4 +1,4 @@
-// Package query resolves reference joins and column paths for storage drivers.
+// Package query resolves reference joins and column sources for storage drivers.
 package query
 
 import (
@@ -25,7 +25,7 @@ type Column struct {
 type Plan struct {
 	Sources []Source
 	Index   *driver.Index
-	paths   map[string]int
+	aliases map[string]int
 }
 
 // Resolve validates every join, including joins unused by filters or ordering.
@@ -37,48 +37,40 @@ func Resolve(database *driver.Database, q *driver.Query) (*Plan, error) {
 	p := &Plan{
 		Sources: []Source{{Table: table}},
 		Index:   index,
-		paths:   map[string]int{"": 0},
+		aliases: map[string]int{"": 0},
 	}
 	for _, join := range q.Joins {
-		if _, exists := p.paths[join.Path]; exists {
-			return nil, fmt.Errorf("duplicate or empty join path %q", join.Path)
+		if _, exists := p.aliases[join.Alias]; exists {
+			return nil, fmt.Errorf("duplicate or empty join alias %q", join.Alias)
 		}
-		parentPath, name := splitColumn(join.Path)
-		parent, exists := p.paths[parentPath]
-		if !exists || name == "" || strings.HasPrefix(join.Path, ".") {
-			return nil, fmt.Errorf("invalid join path %q: parent must be declared first", join.Path)
+		parent, exists := p.aliases[join.Source]
+		if !exists {
+			return nil, fmt.Errorf("unknown join source %q: source must be declared first", join.Source)
 		}
-		col := tableColumn(p.Sources[parent].Table, name)
+		col := tableColumn(p.Sources[parent].Table, join.Column)
 		if col == nil || col.Type != driver.TypeID {
-			return nil, fmt.Errorf("join path %q must reference an ID column", join.Path)
+			return nil, fmt.Errorf("join column %q in source %q must be an ID column", join.Column, join.Source)
 		}
 		target := database.TableByName(join.Table)
 		if target == nil {
 			return nil, fmt.Errorf("unknown join table %q", join.Table)
 		}
-		p.paths[join.Path] = len(p.Sources)
-		p.Sources = append(p.Sources, Source{Table: target, Parent: parent, Key: name})
+		p.aliases[join.Alias] = len(p.Sources)
+		p.Sources = append(p.Sources, Source{Table: target, Parent: parent, Key: join.Column})
 	}
 	return p, nil
 }
 
 // Column resolves a local column name in the main table or a declared join.
-func (p *Plan) Column(path, name string) (Column, error) {
-	source, exists := p.paths[path]
+func (p *Plan) Column(source, name string) (Column, error) {
+	sourceIndex, exists := p.aliases[source]
 	if !exists {
-		return Column{}, fmt.Errorf("unknown query path %q", path)
+		return Column{}, fmt.Errorf("unknown query source %q", source)
 	}
-	if col := tableColumn(p.Sources[source].Table, name); col != nil {
-		return Column{Column: col, Source: source}, nil
+	if col := tableColumn(p.Sources[sourceIndex].Table, name); col != nil {
+		return Column{Column: col, Source: sourceIndex}, nil
 	}
-	return Column{}, fmt.Errorf("unknown query column %q at path %q", name, path)
-}
-
-func splitColumn(path string) (string, string) {
-	if i := strings.LastIndexByte(path, '.'); i >= 0 {
-		return path[:i], path[i+1:]
-	}
-	return "", path
+	return Column{}, fmt.Errorf("unknown query column %q in source %q", name, source)
 }
 
 func tableColumn(table *driver.Table, name string) *driver.Column {

@@ -186,8 +186,8 @@ func (s *Set[T]) Order(names ...string) *Set[T] {
 		if name == "" {
 			panic("mdd: empty order column")
 		}
-		path, column, _ := s.ctx.schema.resolveQueryField(s.tab, s.query, name)
-		order = append(order, driver.QueryOrder{Path: path, Column: column, Desc: desc})
+		source, column, _ := s.ctx.schema.resolveQueryField(s.tab, s.query, name)
+		order = append(order, driver.QueryOrder{Source: source, Column: column, Desc: desc})
 	}
 	s.query.Order = order
 	return s
@@ -265,7 +265,7 @@ func (s *Set[T]) FindOrAdd() *T {
 	result := s.Add()
 	object := any(result).(interface{ Set(string, any) })
 	for _, filter := range s.query.Filters {
-		if filter.Path == "" && filter.Column != "id" && (filter.Op == "" || filter.Op == driver.OpEqual) && len(filter.Values) > 0 {
+		if filter.Source == "" && filter.Column != "id" && (filter.Op == "" || filter.Op == driver.OpEqual) && len(filter.Values) > 0 {
 			object.Set(filter.Column, filter.Values[0])
 		}
 	}

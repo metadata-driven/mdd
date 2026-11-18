@@ -374,7 +374,7 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 	var args []any
 	for _, f := range query.Filters {
 		name := f.Column
-		col, err := plan.Column(f.Path, name)
+		col, err := plan.Column(f.Source, name)
 		if err != nil {
 			return "", fmt.Errorf("mysql: %w", err)
 		}
@@ -430,13 +430,13 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 			order = append(order, driver.QueryOrder{Column: name})
 		}
 	}
-	if len(order) == 0 || order[len(order)-1].Path != "" || order[len(order)-1].Column != "id" {
+	if len(order) == 0 || order[len(order)-1].Source != "" || order[len(order)-1].Column != "id" {
 		desc := len(order) > 0 && order[len(order)-1].Desc
 		order = append(order, driver.QueryOrder{Column: "id", Desc: desc})
 	}
 	orderSQL := make([]string, len(order))
 	for i, item := range order {
-		col, err := plan.Column(item.Path, item.Column)
+		col, err := plan.Column(item.Source, item.Column)
 		if err != nil {
 			return "", fmt.Errorf("mysql: %w", err)
 		}

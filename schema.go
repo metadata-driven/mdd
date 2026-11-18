@@ -54,14 +54,14 @@ func (s *schema) convertQuery(q *xquery.Query) *driver.Query {
 	}
 	for _, order := range q.Order {
 		name := order.Field.String()
-		path, column, _ := s.resolveQueryField(tab, result, name)
-		result.Order = append(result.Order, driver.QueryOrder{Path: path, Column: column, Desc: order.Desc})
+		source, column, _ := s.resolveQueryField(tab, result, name)
+		result.Order = append(result.Order, driver.QueryOrder{Source: source, Column: column, Desc: order.Desc})
 	}
 	return result
 }
 
 // resolveQueryField follows model references, adds the required joins, and
-// returns the source path, local column name, and attribute metadata.
+// returns the source alias, local column name, and attribute metadata.
 func (s *schema) resolveQueryField(root *metaTable, query *driver.Query, name string) (string, string, *metaAttribute) {
 	if name == "" {
 		panic(fmt.Errorf("mdd: empty query field on %s", root.Name))
@@ -100,24 +100,29 @@ func (s *schema) resolveQueryField(root *metaTable, query *driver.Query, name st
 		if target.Database != root.Database {
 			panic(fmt.Errorf("mdd: query path %s.%s joins different databases", root.Name, strings.Join(parts[:i+1], ".")))
 		}
-		addQueryJoins(query, driver.QueryJoin{Path: strings.Join(parts[:i+1], "."), Table: target.Table.Name})
+		addQueryJoins(query, driver.QueryJoin{
+			Source: strings.Join(parts[:i], "."),
+			Column: attr.column.Name,
+			Table:  target.Table.Name,
+			Alias:  strings.Join(parts[:i+1], "."),
+		})
 		current = target
 	}
 	panic(fmt.Errorf("mdd: invalid query field %s.%s", root.Name, name))
 }
 
 func (s *schema) queryFilter(root *metaTable, query *driver.Query, name, op string, values []any) driver.QueryFilter {
-	path, column, attr := s.resolveQueryField(root, query, name)
-	return driver.QueryFilter{Path: path, Column: column, Op: op, Values: castQueryValues(attr, values)}
+	source, column, attr := s.resolveQueryField(root, query, name)
+	return driver.QueryFilter{Source: source, Column: column, Op: op, Values: castQueryValues(attr, values)}
 }
 
 func addQueryJoins(query *driver.Query, joins ...driver.QueryJoin) {
 	for _, join := range joins {
 		found := false
 		for _, existing := range query.Joins {
-			if existing.Path == join.Path {
-				if existing.Table != join.Table {
-					panic(fmt.Errorf("mdd: conflicting query join %s", join.Path))
+			if existing.Alias == join.Alias {
+				if existing != join {
+					panic(fmt.Errorf("mdd: conflicting query join %s", join.Alias))
 				}
 				found = true
 				break

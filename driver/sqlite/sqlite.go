@@ -792,7 +792,7 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 	var args []any
 	for _, f := range q.Filters {
 		name := f.Column
-		col, e := plan.Column(f.Path, name)
+		col, e := plan.Column(f.Source, name)
 		if e != nil {
 			return "", fmt.Errorf("sqlite: %w", e)
 		}
@@ -854,7 +854,7 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 	var keys []sortKey
 	for _, item := range order {
 		name := item.Column
-		col, e := plan.Column(item.Path, name)
+		col, e := plan.Column(item.Source, name)
 		if e != nil {
 			return "", fmt.Errorf("sqlite: %w", e)
 		}
@@ -863,7 +863,7 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		}
 		keys = append(keys, sortKey{col.SQL(quote), item.Desc})
 	}
-	if len(order) == 0 || order[len(order)-1].Path != "" || order[len(order)-1].Column != "id" {
+	if len(order) == 0 || order[len(order)-1].Source != "" || order[len(order)-1].Column != "id" {
 		desc := len(order) > 0 && order[len(order)-1].Desc
 		keys = append(keys, sortKey{idSQL, desc})
 	}

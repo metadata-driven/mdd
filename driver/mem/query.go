@@ -195,16 +195,16 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		}
 	}
 	type columnKey struct {
-		path string
-		name string
+		source string
+		name   string
 	}
 	columns := make(map[columnKey]query.Column)
-	colType := func(path, name string) (driver.DataType, error) {
-		key := columnKey{path, name}
+	colType := func(source, name string) (driver.DataType, error) {
+		key := columnKey{source, name}
 		if col, ok := columns[key]; ok {
 			return col.Type, nil
 		}
-		col, err := plan.Column(path, name)
+		col, err := plan.Column(source, name)
 		if err != nil {
 			return 0, fmt.Errorf("mem: %w", err)
 		}
@@ -212,7 +212,7 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		return col.Type, nil
 	}
 	for _, item := range order {
-		typ, e := colType(item.Path, item.Column)
+		typ, e := colType(item.Source, item.Column)
 		if e != nil {
 			return "", e
 		}
@@ -225,7 +225,7 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		if op == "" {
 			op = driver.OpEqual
 		}
-		typ, e := colType(f.Path, f.Column)
+		typ, e := colType(f.Source, f.Column)
 		if e != nil {
 			return "", e
 		}
@@ -247,7 +247,7 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 	filters := make([]driver.QueryFilter, len(q.Filters))
 	copy(filters, q.Filters)
 	for i := range filters {
-		typ, _ := colType(filters[i].Path, filters[i].Column)
+		typ, _ := colType(filters[i].Source, filters[i].Column)
 		if typ == driver.TypeBinary || typ == driver.TypeFile {
 			filters[i].Values = make([]any, len(q.Filters[i].Values))
 			for j, value := range q.Filters[i].Values {
@@ -286,8 +286,8 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		}
 		return targetID, t.state.Tables[join.Table.Name][targetID], nil
 	}
-	value := func(id uint64, path, name string) (any, error) {
-		col := columns[columnKey{path, name}]
+	value := func(id uint64, source, name string) (any, error) {
+		col := columns[columnKey{source, name}]
 		joinedID, row, err := sourceRow(id, col.Source)
 		if err != nil || row == nil {
 			return nil, err
@@ -304,14 +304,14 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		}
 		matched := true
 		for _, f := range filters {
-			typ, _ := colType(f.Path, f.Column)
+			typ, _ := colType(f.Source, f.Column)
 			op := f.Op
 			if op == "" {
 				op = driver.OpEqual
 			}
 			anyMatch := op == driver.OpNotEqual
 			for _, target := range f.Values {
-				v, err := value(id, f.Path, f.Column)
+				v, err := value(id, f.Source, f.Column)
 				if err != nil {
 					return "", err
 				}
@@ -365,13 +365,13 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 	sort.Slice(ids, func(i, j int) bool {
 		for _, item := range order {
 			name := item.Column
-			typ, _ := colType(item.Path, name)
-			left, e := value(ids[i], item.Path, name)
+			typ, _ := colType(item.Source, name)
+			left, e := value(ids[i], item.Source, name)
 			if e != nil {
 				sortErr = e
 				return ids[i] < ids[j]
 			}
-			right, e := value(ids[j], item.Path, name)
+			right, e := value(ids[j], item.Source, name)
 			if e != nil {
 				sortErr = e
 				return ids[i] < ids[j]
