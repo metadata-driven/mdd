@@ -496,12 +496,14 @@ func (p *parser) parseValue() (any, error) {
 			if n, err := strconv.ParseInt(t.text, 10, 64); err == nil {
 				return n, nil
 			}
+			if n, err := strconv.ParseUint(t.text, 10, 64); err == nil {
+				return n, nil
+			}
 		}
-		n, err := strconv.ParseFloat(t.text, 64)
-		if err != nil {
+		if !json.Valid([]byte(t.text)) {
 			return nil, p.errorf(t, "invalid number")
 		}
-		return n, nil
+		return json.Number(t.text), nil
 	case tLBracket:
 		values, err := p.parseValueList(tRBracket)
 		if err != nil {
@@ -565,12 +567,15 @@ func (p *parser) parseOffset() error {
 		return p.errorf(t, "offset must be a non-negative integer or string")
 	}
 	p.pos++
-	n, err := strconv.ParseInt(t.text, 10, 64)
-	if err != nil || n < 0 {
-		return p.errorf(t, "offset must be a non-negative integer or string")
+	if n, err := strconv.ParseInt(t.text, 10, 64); err == nil && n >= 0 {
+		p.query.Offset = n
+		return nil
 	}
-	p.query.Offset = n
-	return nil
+	if n, err := strconv.ParseUint(t.text, 10, 64); err == nil {
+		p.query.Offset = n
+		return nil
+	}
+	return p.errorf(t, "offset must be a non-negative integer or string")
 }
 
 func (p *parser) commaOrEnd() bool { return p.commaOr(tRParen) }

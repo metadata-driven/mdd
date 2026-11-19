@@ -18,6 +18,9 @@ type Query struct {
 
 type Field string
 
+// Condition compares a field with one or more values. Parsed numbers use int64
+// or uint64 when they fit, and json.Number for fractions, exponents and larger
+// integers.
 type Condition struct {
 	Field  Field  `json:"field"`
 	Op     string `json:"op"`

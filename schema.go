@@ -1,6 +1,7 @@
 package mdd
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"reflect"
@@ -218,9 +219,8 @@ func castCollectionQueryValues(attr *metaAttribute, values []any) []any {
 			result[i] = driver.Cast(value, typ, false)
 		case driver.TypeDecimal:
 			if value == nil {
-				value = "0"
+				result[i] = json.Number("0")
 			}
-			result[i] = must(strconv.ParseFloat(fmt.Sprint(value), 64))
 		case driver.TypeString, driver.TypeBoolean:
 			if value == nil {
 				result[i] = driver.Cast(nil, typ, false)

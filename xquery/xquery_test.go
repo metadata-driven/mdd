@@ -64,7 +64,7 @@ func TestJSONValues(t *testing.T) {
 	require(t, err == nil, "Parse returned an error: ", err)
 	assertEqual(t, toJSON(q), `{"from":"users","where":[{"field":"data","op":"=","values":[1,-2,1.5,true,false,null,"x"]}]}`)
 
-	want := []any{int64(1), int64(-2), 1.5, true, false, nil, "x"}
+	want := []any{int64(1), int64(-2), json.Number("1.5"), true, false, nil, "x"}
 	assertEqual(t, q.Where[0].Values, want)
 }
 

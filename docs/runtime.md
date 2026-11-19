@@ -148,7 +148,7 @@ It also works through joined references, such as `where(user.tags &= featured)`.
 `mdd.OpEqual`, `mdd.OpGT`, and `mdd.OpContainsAll`; string operators remain valid.
 At the driver boundary, `driver.OpContainsAll` accepts nonempty scalar values
 for a JSON collection column: IDs and references are `uint64`, integers are
-`int64`, numbers are `float64`, and strings, timestamps and base64-encoded
+`int64`, decimals are `json.Number`, and strings, timestamps and base64-encoded
 binary values are `string` (a nil binary value remains nil). MySQL uses
 `JSON_CONTAINS`; SQLite uses a
 registered JSON comparison function that preserves integer precision. The mem,

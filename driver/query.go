@@ -41,8 +41,8 @@ type QueryOrder struct {
 // inputs are read into bytes before reaching the driver.
 //
 // OpContainsAll requires a JSON array column and at least one scalar value.
-// MDD supplies uint64 for references and IDs, int64 for integers, float64 for
-// numbers, and string for strings, RFC3339 datetimes, and base64 binary data.
+// MDD supplies uint64 for references and IDs, int64 for integers, json.Number
+// for decimals, and string for strings, RFC3339 datetimes, and base64 binary data.
 // A nil binary element is represented by nil.
 // Callers constructing driver queries should use normalized values. Drivers
 // decide which operators and values they support.
