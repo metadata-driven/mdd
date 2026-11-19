@@ -136,7 +136,7 @@ func TestParseYAMLTypesAndReferences(t *testing.T) {
 
 	assertEqual(t, lookupNode(t, cfg, "user.orders").Query(), "from(orders) where(user={id}) order(ts)")
 	assertEqual(t, lookupNode(t, cfg, "user.recent_orders").Query(), "where(user={id}) order(ts)")
-	assertEqual(t, lookupNode(t, cfg, "user.manager").LookupQuery(), "from(users) order(login)")
+	assertEqual(t, lookupNode(t, cfg, "user.manager").LookupQuery(), "from(users) where(permissions &= manage_users) order(login)")
 	assertEqual(t, lookupNode(t, cfg, "user.manager").Query(), "")
 }
 

@@ -1,4 +1,4 @@
-// Package dbschema describes database-independent storage schemas.
+// Package driver defines database-independent storage schemas and driver APIs.
 // MDD configuration generators produce these structures, and database drivers
 // translate them into database-specific definitions.
 package driver
@@ -71,16 +71,21 @@ type (
 )
 
 const (
-	IndexTypeIndex    IndexType = "index"
-	IndexTypeUnique   IndexType = "unique"
+	// IndexTypeIndex identifies a regular index.
+	IndexTypeIndex IndexType = "index"
+	// IndexTypeUnique identifies an index enforcing unique tuples.
+	IndexTypeUnique IndexType = "unique"
+	// IndexTypeFulltext identifies a full-text index.
 	IndexTypeFulltext IndexType = "fulltext"
 )
 
+// ConnectionURL parses the connection string, returning nil if it is invalid.
 func (t *Database) ConnectionURL() *url.URL {
 	p, _ := url.Parse(t.Connection)
 	return p
 }
 
+// TableByName returns the named table, or nil if it is absent.
 func (t *Database) TableByName(name string) *Table {
 	for _, tab := range t.Tables {
 		if tab.Name == name {
@@ -90,6 +95,7 @@ func (t *Database) TableByName(name string) *Table {
 	return nil
 }
 
+// ColumnByName returns the named column, or nil if it is absent.
 func (t *Table) ColumnByName(name string) *Column {
 	// todo: add cache
 	for _, col := range t.Columns {
@@ -100,6 +106,7 @@ func (t *Table) ColumnByName(name string) *Column {
 	return nil
 }
 
+// ColumnsByName returns columns in the supplied order, with nil for missing names.
 func (t *Table) ColumnsByName(name ...string) []*Column {
 	cc := make([]*Column, len(name))
 	for i, s := range name {
@@ -108,6 +115,7 @@ func (t *Table) ColumnsByName(name ...string) []*Column {
 	return cc
 }
 
+// IndexByName returns the named index, or nil if it is absent.
 func (t *Table) IndexByName(name string) *Index {
 	// todo: add cache
 	for _, idx := range t.Indexes {
@@ -118,6 +126,8 @@ func (t *Table) IndexByName(name string) *Index {
 	return nil
 }
 
+// IndexColumns returns the index's columns in order, or nil if the index is absent.
+// A missing column is represented by nil.
 func (t *Table) IndexColumns(idxName string) []*Column {
 	// todo: add cache
 	idx := t.IndexByName(idxName)

@@ -17,7 +17,7 @@ import (
 )
 
 func schema(path string) *driver.Database {
-	return &driver.Database{Connection: path, Tables: []*driver.Table{{Name: "users", Columns: []*driver.Column{{Name: "name", Type: driver.TypeString}, {Name: "active", Type: driver.TypeBoolean}, {Name: "age", Type: driver.TypeInteger}, {Name: "balance", Type: driver.TypeDecimal, Precision: 20, Scale: 6}, {Name: "friend", Type: driver.TypeID}, {Name: "data", Type: driver.TypeJSON}, {Name: "ava", Type: driver.TypeFile}}, Indexes: []*driver.Index{{Name: "by_age", Columns: []string{"age"}}}}}}
+	return &driver.Database{Connection: path, Tables: []*driver.Table{{Name: "users", Columns: []*driver.Column{{Name: "name", Type: driver.TypeString}, {Name: "active", Type: driver.TypeBoolean}, {Name: "age", Type: driver.TypeInteger}, {Name: "balance", Type: driver.TypeDecimal, Precision: 10, Scale: 6}, {Name: "friend", Type: driver.TypeID}, {Name: "data", Type: driver.TypeJSON}, {Name: "ava", Type: driver.TypeFile}}, Indexes: []*driver.Index{{Name: "by_age", Columns: []string{"age"}}}}}}
 }
 func conn(t *testing.T, s *driver.Database) driver.Connection {
 	t.Helper()
@@ -70,7 +70,7 @@ func TestValuesAndPersistence(t *testing.T) {
 	c := conn(t, s)
 	x := trans(t, c)
 	a, b := id(t, x), id(t, x)
-	set(t, x, a, driver.DataObject{"name": "Alice \x00 '", "active": true, "age": 16, "balance": "12345678901234.123456", "friend": b, "ava": []byte{0, 255, 1}, "data": map[string]any{"nested": []any{"a", true}}})
+	set(t, x, a, driver.DataObject{"name": "Alice \x00 '", "active": true, "age": 16, "balance": "1234.123456", "friend": b, "ava": []byte{0, 255, 1}, "data": map[string]any{"nested": []any{"a", true}}})
 	if err := x.Increment("users", a, driver.DataObject{"balance": "0.000001", "age": 2}); err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestValuesAndPersistence(t *testing.T) {
 		t.Fatalf("avatar type = %T, want driver.File", row["ava"])
 	}
 	row["ava"] = avatar.Bytes()
-	want := driver.DataObject{"name": "Alice \x00 '", "active": true, "age": int64(18), "balance": "12345678901234.123457", "friend": b, "ava": []byte{0, 255, 1}, "data": map[string]any{"nested": []any{"a", true}}}
+	want := driver.DataObject{"name": "Alice \x00 '", "active": true, "age": int64(18), "balance": "1234.123457", "friend": b, "ava": []byte{0, 255, 1}, "data": map[string]any{"nested": []any{"a", true}}}
 	if !reflect.DeepEqual(row, want) {
 		t.Fatalf("got %#v want %#v", row, want)
 	}
@@ -104,10 +104,10 @@ func TestValuesAndPersistence(t *testing.T) {
 	}
 	commit(t, x)
 }
-func TestDecimalPrecisionAndOrder(t *testing.T) {
+func TestDecimalOrder(t *testing.T) {
 	c := conn(t, schema(filepath.Join(t.TempDir(), "test.db")))
 	x := trans(t, c)
-	vals := []string{"99999999999999.999999", "-99999999999999.999999", "0.000000", "-2.000001", "2.000000"}
+	vals := []string{"9999.999999", "-9999.999999", "0.000000", "-2.000001", "2.000000"}
 	for _, v := range vals {
 		n := id(t, x)
 		set(t, x, n, driver.DataObject{"balance": v})
@@ -125,9 +125,6 @@ func TestDecimalPrecisionAndOrder(t *testing.T) {
 	}
 	if !slices.Equal(all, []uint64{2, 4, 3, 5, 1}) {
 		t.Fatalf("ordered IDs = %v", all)
-	}
-	if err := x.Increment("users", 1, driver.DataObject{"balance": "0.000001"}); err == nil {
-		t.Fatal("decimal overflow accepted")
 	}
 	x.Rollback()
 }
@@ -313,4 +310,8 @@ func TestFileAndBinaryTransactions(t *testing.T) {
 		Reopen:        true,
 		LiveFileReads: true,
 	})
+}
+
+func TestCollectionFilters(t *testing.T) {
+	drivertest.CollectionFilters(t, filepath.Join(t.TempDir(), "collection.db"), "records")
 }

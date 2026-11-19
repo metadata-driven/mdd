@@ -113,6 +113,15 @@ func (s *schema) resolveQueryField(root *metaTable, query *driver.Query, name st
 
 func (s *schema) queryFilter(root *metaTable, query *driver.Query, name, op string, values []any) driver.QueryFilter {
 	source, column, attr := s.resolveQueryField(root, query, name)
+	if op == driver.OpContainsAll {
+		if attr == nil || !attr.Type().Collection {
+			panic(fmt.Errorf("mdd: operator &= requires a collection: %s.%s", root.Name, name))
+		}
+		if len(values) == 0 {
+			panic("mdd: operator &= requires at least one value")
+		}
+		return driver.QueryFilter{Source: source, Column: column, Op: op, Values: castCollectionQueryValues(attr, values)}
+	}
 	return driver.QueryFilter{Source: source, Column: column, Op: op, Values: castQueryValues(attr, values)}
 }
 
@@ -151,7 +160,72 @@ func castQueryValues(attr *metaAttribute, values []any) []any {
 				}
 			}
 		}
-		result[i] = driver.Cast(typ, value)
+		value = driver.Cast(value, typ, false)
+		switch typ {
+		case driver.TypeFile:
+			value = must(driver.FileBytes(value))
+		}
+		result[i] = value
+	}
+	return result
+}
+
+func collectionElementType(info meta.TypeInfo) driver.DataType {
+	if info.IsReference() {
+		return driver.TypeID
+	}
+	switch info.PrimitiveTypeName() {
+	case meta.TypeID:
+		return driver.TypeID
+	case meta.TypeBool:
+		return driver.TypeBoolean
+	case meta.TypeInt:
+		return driver.TypeInteger
+	case meta.TypeNumber:
+		return driver.TypeDecimal
+	case meta.TypeDatetime:
+		return driver.TypeDatetime
+	case meta.TypeString:
+		return driver.TypeString
+	case meta.TypeBinary:
+		return driver.TypeBinary
+	default:
+		panic(fmt.Errorf("mdd: unsupported collection type %s", info.Expr))
+	}
+}
+
+func castCollectionQueryValues(attr *metaAttribute, values []any) []any {
+	info := attr.Type()
+	typ := collectionElementType(info)
+	items := make([]any, len(values))
+	for i, value := range values {
+		if info.Target.Kind() == meta.KindEnum {
+			if name, ok := value.(string); ok {
+				for _, item := range info.Target.(meta.Enum).Items() {
+					if item.Name() == name || item.Path() == name {
+						value = item.ItemID()
+						break
+					}
+				}
+			}
+		}
+		items[i] = value
+	}
+	result := driver.Cast(items, typ, true).([]any)
+	for i, value := range result {
+		switch typ {
+		case driver.TypeID, driver.TypeInteger:
+			result[i] = driver.Cast(value, typ, false)
+		case driver.TypeDecimal:
+			if value == nil {
+				value = "0"
+			}
+			result[i] = must(strconv.ParseFloat(fmt.Sprint(value), 64))
+		case driver.TypeString, driver.TypeBoolean:
+			if value == nil {
+				result[i] = driver.Cast(nil, typ, false)
+			}
+		}
 	}
 	return result
 }

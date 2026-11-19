@@ -132,6 +132,30 @@ orders := ctx.Orders().Query("where(status=placed) order(ts desc)")
 orders = mdd.NewQuery[Order](ctx, "where(status=placed) order(ts desc)")
 ```
 
+Collection fields support `&=` to require every listed element:
+
+```go
+users := ctx.Users().Query("where(permissions &= manage_users, manage_orders)")
+users = ctx.Users().WhereContainsAll("permissions", UserPermissionManageUsers, UserPermissionManageOrders)
+users = ctx.Users().Where("friends", mdd.OpContainsAll, manager)
+```
+
+The operator checks JSON array elements, not substrings. Empty collections do
+not match; an empty candidate list or a scalar field is an error. Model and enum
+values are converted to IDs, while other values use the collection element type.
+It also works through joined references, such as `where(user.tags &= featured)`.
+`Where` also accepts the operator constants exposed by `mdd`, such as
+`mdd.OpEqual`, `mdd.OpGT`, and `mdd.OpContainsAll`; string operators remain valid.
+At the driver boundary, `driver.OpContainsAll` accepts nonempty scalar values
+for a JSON collection column: IDs and references are `uint64`, integers are
+`int64`, numbers are `float64`, and strings, timestamps and base64-encoded
+binary values are `string` (a nil binary value remains nil). MySQL uses
+`JSON_CONTAINS`; SQLite uses a
+registered JSON comparison function that preserves integer precision. The mem,
+file, JSON and YAML drivers compare decoded values in memory. No collection
+index is implied. Callers constructing driver queries directly should supply
+normalized values; drivers determine their supported operators and values.
+
 `mdd.AttrSet[T](object, name)` builds a set from the attribute's metadata query.
 It evaluates `{...}` expressions against the object using its Go methods and
 stored attributes, parses the result with `xquery`, and translates its
@@ -173,6 +197,25 @@ input cannot recover precision already lost by that input. JSON numbers use
 `json.Number`. Collections are JSON arrays at the driver boundary. References
 inside them are stored as IDs and resolved by `Attr`. Index support for
 collections depends on the driver. Absent JSON, binary and file values are returned as nil.
+
+SQLite stores decimal fields as `REAL` and returns them to MDD as decimal
+strings rounded to the declared scale. It supports up to 10 total digits of
+declared precision. A plain `number` uses precision 10 and scale 0. Decimal increments use
+`round((value + delta) * 1e14) / 1e14`. Applications are responsible for
+keeping values within the declared precision and scale.
+
+MDD prepares `driver.QueryFilter.Values` before passing them to a driver. Scalar
+filters use the column's normalized type; file filter values are read into
+`[]byte`. JSON filter values can contain decoded JSON structures; drivers
+determine which JSON operations they support. See `driver.QueryFilter` for the
+filter value contract.
+
+`driver.Cast(value, typ, isCollection)` normalizes a primitive or a collection
+of elements with the given type. It panics on unsupported values. For a
+collection, it returns a JSON-compatible `[]any`: numeric values are represented
+as `json.Number`, dates as UTC strings, and binary values as base64 strings.
+This keeps JSON numbers precise and lets drivers store the collection as JSON.
+Both MDD and drivers can use this utility.
 
 Model and set operations return values directly and panic on failures. `Find`,
 `First`, `Last`, `FindBy` and `FindByID` return nil when no record matches;

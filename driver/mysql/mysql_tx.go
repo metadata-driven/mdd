@@ -382,6 +382,15 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 		if op == "" {
 			op = driver.OpEqual
 		}
+		if op == driver.OpContainsAll {
+			if col.Type != driver.TypeJSON {
+				return "", fmt.Errorf("mysql: &= requires a JSON collection")
+			}
+			candidates, _ := json.Marshal(f.Values)
+			where = append(where, "JSON_CONTAINS(COALESCE(NULLIF("+col.SQL(escName)+", ''), '[]'), ?)")
+			args = append(args, string(candidates))
+			continue
+		}
 		switch op {
 		case driver.OpEqual, driver.OpNotEqual, driver.OpGT, driver.OpGTE, driver.OpLT, driver.OpLTE, driver.OpMatch:
 		default:

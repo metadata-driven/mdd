@@ -210,3 +210,14 @@ func toJSON(v any) string {
 	}
 	return string(data)
 }
+
+func TestCollectionOperator(t *testing.T) {
+	q, err := Parse("from(users) where(permissions &= manage_users, manage_orders)")
+	require(t, err == nil, err)
+	assertEqual(t, q.Where[0].Op, "&=")
+	assertEqual(t, q.Where[0].Values, []any{"manage_users", "manage_orders"})
+	for _, src := range []string{"where(tags &= [])", "where(tags & read)"} {
+		_, err := Parse(src)
+		require(t, err != nil, "expected error for ", src)
+	}
+}

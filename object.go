@@ -2,6 +2,7 @@ package mdd
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"reflect"
 	"strings"
@@ -459,37 +460,29 @@ func (o *Object) Set(attr string, v any) {
 
 func (o *Object) castValue(attr *metaAttribute, value any) any {
 	info := attr.Type()
-	if info.Collection && value != nil {
-		binary := info.Target.Kind() == meta.KindType && info.PrimitiveTypeName() == meta.TypeBinary
-		items := reflect.ValueOf(value)
-		if items.Kind() != reflect.Slice && items.Kind() != reflect.Array || binary && items.Type() == reflect.TypeFor[[]byte]() {
-			value = []any{value}
-			items = reflect.ValueOf(value)
-		}
-		values := make([]any, items.Len())
-		for i := range items.Len() {
-			values[i] = items.Index(i).Interface()
-			if info.IsReference() {
-				values[i] = driver.Cast(driver.TypeID, values[i])
-			} else if binary && values[i] != nil {
-				switch v := values[i].(type) {
-				case []byte:
-					values[i] = v
-				case string:
-					values[i] = []byte(v)
-				default:
-					panic(fmt.Errorf("mdd: %s[%d] requires binary data, got %T", attr.Path(), i, v))
-				}
-				if data := values[i].([]byte); info.Length > 0 && len(data) > info.Length {
-					panic(fmt.Errorf("mdd: %s[%d] has %d bytes, maximum is %d", attr.Path(), i, len(data), info.Length))
-				}
-			} else if info.PrimitiveTypeName() == meta.TypeDatetime {
-				values[i] = driver.Cast(driver.TypeDatetime, values[i])
+	if !info.Collection {
+		return driver.Cast(value, attr.column.Type, false)
+	}
+	typ := collectionElementType(info)
+	result := driver.Cast(value, typ, true)
+	if typ == driver.TypeBinary && info.Length > 0 && result != nil {
+		for i, item := range result.([]any) {
+			if item == nil {
+				continue
+			}
+			encoded := item.(string)
+			size := base64.StdEncoding.DecodedLen(len(encoded))
+			if strings.HasSuffix(encoded, "==") {
+				size -= 2
+			} else if strings.HasSuffix(encoded, "=") {
+				size--
+			}
+			if size > info.Length {
+				panic(fmt.Errorf("mdd: %s[%d] has %d bytes, maximum is %d", attr.Path(), i, size, info.Length))
 			}
 		}
-		value = values
 	}
-	return driver.Cast(attr.column.Type, value)
+	return result
 }
 
 func (o *Object) attribute(name string) *metaAttribute {
@@ -514,7 +507,7 @@ func predefinedObject(s *schema, tab *metaTable, item meta.Item) *Object {
 	obj.data = make(driver.DataObject)
 	for name, attr := range tab.Attrs {
 		if attr.column != nil {
-			obj.data[name] = driver.Cast(attr.column.Type, nil)
+			obj.data[name] = driver.Cast(nil, attr.column.Type, false)
 		}
 	}
 	for _, row := range s.items {
@@ -526,7 +519,7 @@ func predefinedObject(s *schema, tab *metaTable, item meta.Item) *Object {
 			if attr.Type().IsFile() {
 				obj.data[name] = value
 			} else {
-				obj.data[name] = driver.Cast(attr.column.Type, value)
+				obj.data[name] = driver.Cast(value, attr.column.Type, false)
 			}
 		}
 	}

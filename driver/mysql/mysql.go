@@ -13,6 +13,7 @@ import (
 	"github.com/metadata-driven/mdd/driver"
 )
 
+// Connection provides access to a MySQL database.
 type Connection struct {
 	scheme *driver.Database
 	op     *url.URL
@@ -21,6 +22,7 @@ type Connection struct {
 
 var _ = driver.Register(newConnection, "mysql")
 
+// SQLTracer receives SQL statements when non-nil.
 var SQLTracer *log.Logger
 
 func newConnection(scheme *driver.Database) (driver.Connection, error) {
@@ -40,22 +42,27 @@ func newConnection(scheme *driver.Database) (driver.Connection, error) {
 	return c, nil
 }
 
+// String returns the connection string.
 func (c *Connection) String() string {
 	return c.scheme.Connection
 }
 
+// Params returns the parsed connection URL.
 func (c *Connection) Params() *url.URL {
 	return c.op
 }
 
+// Close closes the database connection pool.
 func (c *Connection) Close() error {
 	return c.db.Close()
 }
 
+// OpenTransaction starts a MySQL transaction controlled by ctx.
 func (c *Connection) OpenTransaction(ctx context.Context) (driver.Transaction, error) {
 	return newTransaction(c, ctx)
 }
 
+// Rebase updates the database schema to match the configured schema.
 func (c *Connection) Rebase() (err error) {
 	//println("------- rebase for ", c.Params().String())
 	defer recoverError(&err)

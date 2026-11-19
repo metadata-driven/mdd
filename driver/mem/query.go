@@ -3,8 +3,10 @@ package mem
 import (
 	"bytes"
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"math/big"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +26,66 @@ func numeric(v any) (*big.Rat, error) {
 		return nil, fmt.Errorf("mem: invalid numeric value %v", v)
 	}
 	return n, nil
+}
+
+func collectionNumber(v any) bool {
+	switch v.(type) {
+	case json.Number, float32, float64, int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64:
+		return true
+	default:
+		return false
+	}
+}
+
+func collectionContainsAll(value any, targets []any) (bool, error) {
+	if value == nil {
+		return false, nil
+	}
+	if text, ok := value.(string); ok && text == "" {
+		return false, nil
+	}
+	items := reflect.ValueOf(value)
+	if items.Kind() != reflect.Slice && items.Kind() != reflect.Array {
+		return false, fmt.Errorf("mem: JSON collection must be an array")
+	}
+	for _, target := range targets {
+		found := false
+		for i := 0; i < items.Len(); i++ {
+			item := items.Index(i).Interface()
+			if collectionNumber(item) && collectionNumber(target) {
+				a, err := numeric(item)
+				if err != nil {
+					return false, err
+				}
+				b, err := numeric(target)
+				if err != nil {
+					return false, err
+				}
+				found = a.Cmp(b) == 0
+			} else {
+				switch v := item.(type) {
+				case nil:
+					found = target == nil
+				case string:
+					if t, ok := target.(string); ok {
+						found = v == t
+					}
+				case bool:
+					if t, ok := target.(bool); ok {
+						found = v == t
+					}
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func compare(a, b any, typ driver.DataType) (int, error) {
@@ -79,11 +141,11 @@ func compare(a, b any, typ driver.DataType) (int, error) {
 	case driver.TypeDatetime:
 		x, ok := a.(time.Time)
 		if !ok {
-			x = driver.Cast(driver.TypeDatetime, a).(time.Time)
+			x = driver.Cast(a, driver.TypeDatetime, false).(time.Time)
 		}
 		y, ok := b.(time.Time)
 		if !ok {
-			y = driver.Cast(driver.TypeDatetime, b).(time.Time)
+			y = driver.Cast(b, driver.TypeDatetime, false).(time.Time)
 		}
 		return x.Compare(y), nil
 	case driver.TypeBinary, driver.TypeFile:
@@ -229,18 +291,22 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		if e != nil {
 			return "", e
 		}
-		if typ == driver.TypeJSON {
+		if op == driver.OpContainsAll {
+			if typ != driver.TypeJSON {
+				return "", fmt.Errorf("mem: &= requires a JSON collection")
+			}
+		} else if typ == driver.TypeJSON {
 			return "", errorsUnsupportedType(typ)
 		}
 		switch op {
-		case "", driver.OpEqual, driver.OpNotEqual, driver.OpGT, driver.OpGTE, driver.OpLT, driver.OpLTE, driver.OpMatch:
+		case "", driver.OpEqual, driver.OpNotEqual, driver.OpGT, driver.OpGTE, driver.OpLT, driver.OpLTE, driver.OpMatch, driver.OpContainsAll:
 		default:
 			return "", fmt.Errorf("mem: unsupported operator %q", f.Op)
 		}
-		if len(f.Values) == 0 && op != driver.OpEqual && op != driver.OpNotEqual {
+		if len(f.Values) == 0 && op != driver.OpEqual && op != driver.OpNotEqual && op != driver.OpContainsAll {
 			return "", fmt.Errorf("mem: empty filter values")
 		}
-		if len(f.Values) > 1 && op != driver.OpEqual && op != driver.OpNotEqual {
+		if len(f.Values) > 1 && op != driver.OpEqual && op != driver.OpNotEqual && op != driver.OpContainsAll {
 			return "", fmt.Errorf("mem: multiple values require equality or inequality")
 		}
 	}
@@ -308,6 +374,21 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 			op := f.Op
 			if op == "" {
 				op = driver.OpEqual
+			}
+			if op == driver.OpContainsAll {
+				v, err := value(id, f.Source, f.Column)
+				if err != nil {
+					return "", err
+				}
+				ok, err := collectionContainsAll(v, f.Values)
+				if err != nil {
+					return "", err
+				}
+				if !ok {
+					matched = false
+					break
+				}
+				continue
 			}
 			anyMatch := op == driver.OpNotEqual
 			for _, target := range f.Values {

@@ -25,6 +25,7 @@ type Snapshot struct {
 // It must not open a transaction on the same connection.
 type SaveFunc func(*Snapshot) error
 
+// Connection stores database records in memory.
 type Connection struct {
 	schema *driver.Database
 	gate   chan struct{}
@@ -127,6 +128,7 @@ func NewConnection(schema *driver.Database, initial *Snapshot, save SaveFunc) (*
 	return c, nil
 }
 
+// OpenTransaction starts an in-memory transaction controlled by ctx.
 func (c *Connection) OpenTransaction(ctx context.Context) (driver.Transaction, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -150,6 +152,7 @@ func (c *Connection) OpenTransaction(ctx context.Context) (driver.Transaction, e
 	return &transaction{conn: c, ctx: ctx, state: copySnapshot(c.state)}, nil
 }
 
+// Close closes the in-memory connection.
 func (c *Connection) Close() error {
 	c.mu.Lock()
 	c.closed = true
@@ -232,7 +235,7 @@ func (t *transaction) Get(table string, id uint64) (driver.DataObject, error) {
 				}
 			default:
 				if !canonicalValue(col.Type, value) {
-					result[col.Name] = driver.Cast(col.Type, value)
+					result[col.Name] = driver.Cast(value, col.Type, false)
 				}
 			}
 		}

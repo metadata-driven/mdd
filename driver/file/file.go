@@ -26,6 +26,7 @@ import (
 
 var _ = driver.Register(open, "file")
 
+// Connection stores records and file attributes in a directory.
 type Connection struct {
 	root   string
 	schema *driver.Database
@@ -116,7 +117,11 @@ func open(schema *driver.Database) (driver.Connection, error) {
 	}
 	return c, nil
 }
+
+// Close closes the connection.
 func (c *Connection) Close() error { return c.memory.Close() }
+
+// OpenTransaction starts a transaction controlled by ctx.
 func (c *Connection) OpenTransaction(ctx context.Context) (driver.Transaction, error) {
 	if ctx == nil {
 		ctx = context.Background()

@@ -106,6 +106,10 @@ models:
         type: set<order>
         query: 'where(user={id}) where(status={preferredStatus}) order(ts)'
 
+      - name: authorized_users
+        type: set<user>
+        query: 'where(permissions &= manage_users, manage_orders) order(login)'
+
     items:
       - name: super_admin
         id: 1

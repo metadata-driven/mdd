@@ -308,6 +308,20 @@ _ = orders
 _ = allOrders
 ```
 
+For a collection, `&=` requires every listed element. For example, the
+[`tests` model](tests/meta.yaml) has `permissions` and `friends` collections:
+
+```go
+users := ctx.Users().Query("where(permissions &= manage_users, manage_orders)")
+users = ctx.Users().WhereContainsAll("permissions", models.UserPermissionManageUsers, models.UserPermissionManageOrders)
+users = ctx.Users().Where("friends", mdd.OpContainsAll, manager)
+```
+
+The last two lines use the types and predefined values declared by that example
+model. Values in `friends` are object references; values in `permissions` are
+predefined enumeration items. See the [runtime reference](docs/runtime.md) for
+collection query semantics and driver support.
+
 A `set<order>` attribute with a `query` is accessed with `mdd.AttrSet[Order]`, as shown by `User.Orders()` above. The query's placeholders are evaluated against that user. Query template placeholders passed to `Set.Query` are evaluated against the application context. See [`tests/query_test.go`](tests/query_test.go) and the [runtime reference](docs/runtime.md) for examples and supported behavior.
 
 ## Events and validation

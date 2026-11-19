@@ -2,6 +2,7 @@ package driver
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -102,9 +103,70 @@ func JSONText(value any) (string, error) {
 	return s, nil
 }
 
-// Cast converts a value to a representation accepted for the given column type.
-// Unsupported values cause a panic. File readers remain lazy until the driver writes them.
-func Cast(typ DataType, value any) any {
+// Cast converts a value to the representation for typ. If isCollection is
+// true, typ describes the element type and the result is a JSON-compatible
+// []any. A scalar is treated as a single-element collection. JSON numbers use
+// json.Number, datetimes use UTC strings, and binary values use base64 strings.
+// Unsupported values cause a panic. File readers remain lazy until written.
+func Cast(value any, typ DataType, isCollection bool) any {
+	if isCollection {
+		return castCollection(value, typ)
+	}
+	return castScalar(value, typ)
+}
+
+func castCollection(value any, typ DataType) any {
+	if value == nil {
+		return nil
+	}
+	if typ == TypeFile || typ == TypeJSON {
+		panic(fmt.Errorf("driver: data type %d cannot be a collection", typ))
+	}
+	items := reflect.ValueOf(value)
+	if items.Kind() != reflect.Slice && items.Kind() != reflect.Array || typ == TypeBinary && items.Type() == reflect.TypeFor[[]byte]() {
+		value = []any{value}
+		items = reflect.ValueOf(value)
+	}
+	result := make([]any, items.Len())
+	for i := range items.Len() {
+		item := items.Index(i).Interface()
+		if typ == TypeBinary {
+			switch v := item.(type) {
+			case nil:
+			case []byte:
+				if v != nil {
+					item = base64.StdEncoding.EncodeToString(v)
+				} else {
+					item = nil
+				}
+			case string:
+				item = base64.StdEncoding.EncodeToString([]byte(v))
+			default:
+				panic(fmt.Errorf("driver: cannot cast %T to binary collection element", item))
+			}
+		} else if item != nil || typ == TypeID || typ == TypeDatetime {
+			item = castScalar(item, typ)
+			switch typ {
+			case TypeID:
+				item = json.Number(strconv.FormatUint(item.(uint64), 10))
+			case TypeInteger:
+				item = json.Number(strconv.FormatInt(item.(int64), 10))
+			case TypeDecimal:
+				item = json.Number(item.(string))
+			case TypeDatetime:
+				date := item.(time.Time)
+				if date.Year() < 0 || date.Year() > 9999 {
+					panic(fmt.Errorf("driver: timestamp year outside JSON range: %d", date.Year()))
+				}
+				item = date.Format(time.RFC3339Nano)
+			}
+		}
+		result[i] = item
+	}
+	return result
+}
+
+func castScalar(value any, typ DataType) any {
 	if isNil(value) {
 		switch typ {
 		case TypeBinary, TypeFile, TypeJSON:

@@ -2,10 +2,10 @@ package tests
 
 import "github.com/metadata-driven/mdd"
 
-type UserType struct{ mdd.EnumItem }
-type UserPermission struct{ mdd.EnumItem }
-type OrderStatus struct{ mdd.EnumItem }
-type OrderCurrency struct{ mdd.EnumItem }
+type UserType struct{ mdd.EnumItem }       // enum user.type
+type UserPermission struct{ mdd.EnumItem } // enum user.permission
+type OrderStatus struct{ mdd.EnumItem }    // enum order.status
+type OrderCurrency struct{ mdd.EnumItem }  // enum order.currency
 
 var (
 	UserTypeAdmin = mdd.Item[UserType](Meta, "user.type.admin")

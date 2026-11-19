@@ -14,7 +14,9 @@ var ErrFileConsumed = errors.New("driver: file reader cannot be reopened")
 // File is a lazy view of a binary attribute in a transaction.
 type File interface {
 	io.ReadCloser
+	// Bytes reads the remaining content and closes the reader. It panics on error.
 	Bytes() []byte
+	// String reads the remaining content as a string. It panics on error.
 	String() string
 }
 

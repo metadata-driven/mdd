@@ -200,7 +200,9 @@ func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 func isNumberByte(c byte) bool {
 	return isDigit(c) || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-'
 }
-func isOperatorStart(c byte) bool { return c == '=' || c == '!' || c == '>' || c == '<' || c == '~' }
+func isOperatorStart(c byte) bool {
+	return c == '=' || c == '!' || c == '>' || c == '<' || c == '~' || c == '&'
+}
 
 func punctuationKind(c byte) tokenKind {
 	switch c {
@@ -381,7 +383,10 @@ func (p *parser) parseWhere() error {
 	if err != nil {
 		return err
 	}
-	if len(values) != 1 && op != "=" && op != "!=" {
+	if len(values) == 0 && op == "&=" {
+		return p.errorf(p.peek(), "operator &= requires at least one value")
+	}
+	if len(values) != 1 && op != "=" && op != "!=" && op != "&=" {
 		return p.errorf(p.peek(), "operator %s requires exactly one value", op)
 	}
 	p.query.Where = append(p.query.Where, Condition{Field: field, Op: op, Values: values})
@@ -393,7 +398,7 @@ func (p *parser) parseOperator() (string, error) {
 	txt := t.text
 	if t.kind == tOperator {
 		p.pos++
-		if txt == "=" || txt == "!=" || txt == ">" || txt == ">=" || txt == "<" || txt == "<=" || txt == "~" {
+		if txt == "&=" || txt == "=" || txt == "!=" || txt == ">" || txt == ">=" || txt == "<" || txt == "<=" || txt == "~" {
 			return txt, nil
 		}
 	}

@@ -175,6 +175,11 @@ func (s *Set[T]) Filter(name string, values ...any) *Set[T] {
 	return s.Where(name, driver.OpEqual, values...)
 }
 
+// WhereContainsAll matches collections containing every supplied value.
+func (s *Set[T]) WhereContainsAll(name string, values ...any) *Set[T] {
+	return s.Where(name, OpContainsAll, values...)
+}
+
 // Order sets the sort columns. A leading minus sign selects descending order.
 func (s *Set[T]) Order(names ...string) *Set[T] {
 	if s == nil {

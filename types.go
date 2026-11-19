@@ -17,6 +17,25 @@ type (
 	JSONObject = driver.DataObject
 )
 
+const (
+	// OpEqual matches any of the supplied values.
+	OpEqual = driver.OpEqual
+	// OpNotEqual excludes all of the supplied values.
+	OpNotEqual = driver.OpNotEqual
+	// OpGT matches values greater than the supplied value.
+	OpGT = driver.OpGT
+	// OpGTE matches values greater than or equal to the supplied value.
+	OpGTE = driver.OpGTE
+	// OpLT matches values less than the supplied value.
+	OpLT = driver.OpLT
+	// OpLTE matches values less than or equal to the supplied value.
+	OpLTE = driver.OpLTE
+	// OpMatch matches text containing the supplied value.
+	OpMatch = driver.OpMatch
+	// OpContainsAll matches collections containing all supplied values.
+	OpContainsAll = driver.OpContainsAll
+)
+
 // NewFile accepts a string, byte slice, io.Reader, or reader factory.
 // A supplied reader is consumed at most once; strings, byte slices, and reader
 // factories can be reopened after reading or closing.

@@ -20,13 +20,22 @@ type JSON = any
 type DataType int
 
 const (
-	TypeID       DataType = iota // uint64
-	TypeBoolean                  // Boolean value.
-	TypeInteger                  // Signed 64-bit integer.
-	TypeDecimal                  // Exact decimal with precision and scale.
-	TypeDatetime                 // Date and time.
-	TypeString                   // Variable-length character string.
-	TypeBinary                   // In-memory binary data.
-	TypeFile                     // Lazily read binary data.
-	TypeJSON                     // JSON-compatible structured value.
+	// TypeID is an unsigned 64-bit record identifier or reference.
+	TypeID DataType = iota
+	// TypeBoolean is a Boolean value.
+	TypeBoolean
+	// TypeInteger is a signed 64-bit integer.
+	TypeInteger
+	// TypeDecimal is an exact decimal with precision and scale.
+	TypeDecimal
+	// TypeDatetime is a UTC date and time.
+	TypeDatetime
+	// TypeString is a variable-length character string.
+	TypeString
+	// TypeBinary is in-memory binary data.
+	TypeBinary
+	// TypeFile is lazily read binary data.
+	TypeFile
+	// TypeJSON is a JSON-compatible structured value.
+	TypeJSON
 )

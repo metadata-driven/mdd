@@ -2,6 +2,7 @@ package tests
 
 import (
 	"strings"
+	"time"
 
 	"github.com/metadata-driven/mdd"
 )
@@ -21,16 +22,16 @@ var UserSuperAdmin = mdd.Item[User](Meta, "user.super_admin")
 
 func (u *User) Context() *Context              { return mdd.Ctx[Context](u) }
 func (u *User) ID() uint64                     { return mdd.ID(u) }
-func (u *User) Created() Time                  { return mdd.Attr[Time](u, "created") }
+func (u *User) Created() time.Time             { return mdd.Attr[time.Time](u, "created") }
 func (u *User) Active() bool                   { return mdd.Attr[bool](u, "active") }
 func (u *User) Login() string                  { return mdd.Attr[string](u, "login") }
 func (u *User) Name() string                   { return mdd.Attr[string](u, "name") }
-func (u *User) Birthday() Time                 { return mdd.Attr[Time](u, "birthday") }
+func (u *User) Birthday() time.Time            { return mdd.Attr[time.Time](u, "birthday") }
 func (u *User) Score() int64                   { return mdd.Attr[int64](u, "score") }
 func (u *User) Avatar() mdd.File               { return mdd.Attr[mdd.File](u, "avatar") }
 func (u *User) Token() []byte                  { return mdd.Attr[[]byte](u, "token") }
 func (u *User) Online() bool                   { return mdd.Attr[bool](u, "online") }
-func (u *User) LastSeen() Time                 { return mdd.Attr[Time](u, "last_seen") }
+func (u *User) LastSeen() time.Time            { return mdd.Attr[time.Time](u, "last_seen") }
 func (u *User) Latitude() float64              { return mdd.Attr[float64](u, "latitude") }
 func (u *User) Longitude() float64             { return mdd.Attr[float64](u, "longitude") }
 func (u *User) Manager() *User                 { return mdd.Attr[*User](u, "manager") }
@@ -40,16 +41,16 @@ func (u *User) Type() *UserType                { return mdd.Attr[*UserType](u, "
 func (u *User) PreviousType() *UserType        { return mdd.Attr[*UserType](u, "previous_type") }
 func (u *User) Permissions() []*UserPermission { return mdd.Attr[[]*UserPermission](u, "permissions") }
 
-func (u *User) SetCreated(v Time) *User                  { return mdd.SetAttr(u, "created", v) }
+func (u *User) SetCreated(v time.Time) *User             { return mdd.SetAttr(u, "created", v) }
 func (u *User) SetActive(v bool) *User                   { return mdd.SetAttr(u, "active", v) }
 func (u *User) SetLogin(v string) *User                  { return mdd.SetAttr(u, "login", v) }
 func (u *User) SetName(v string) *User                   { return mdd.SetAttr(u, "name", v) }
-func (u *User) SetBirthday(v Time) *User                 { return mdd.SetAttr(u, "birthday", v) }
+func (u *User) SetBirthday(v time.Time) *User            { return mdd.SetAttr(u, "birthday", v) }
 func (u *User) SetScore(v int64) *User                   { return mdd.SetAttr(u, "score", v) }
 func (u *User) SetAvatar(v any) *User                    { return mdd.SetAttr(u, "avatar", v) }
 func (u *User) SetToken(v []byte) *User                  { return mdd.SetAttr(u, "token", v) }
 func (u *User) SetOnline(v bool) *User                   { return mdd.SetAttr(u, "online", v) }
-func (u *User) SetLastSeen(v Time) *User                 { return mdd.SetAttr(u, "last_seen", v) }
+func (u *User) SetLastSeen(v time.Time) *User            { return mdd.SetAttr(u, "last_seen", v) }
 func (u *User) SetLatitude(v float64) *User              { return mdd.SetAttr(u, "latitude", v) }
 func (u *User) SetLongitude(v float64) *User             { return mdd.SetAttr(u, "longitude", v) }
 func (u *User) SetManager(v *User) *User                 { return mdd.SetAttr(u, "manager", v) }

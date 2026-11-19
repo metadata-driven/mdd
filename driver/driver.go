@@ -8,6 +8,8 @@ import (
 
 var drivers = map[string]ConnectionConstructor{}
 
+// Register associates URL schemes with a connection constructor.
+// Registering an existing scheme replaces its constructor.
 func Register(constructor ConnectionConstructor, scheme ...string) error {
 	for _, name := range scheme {
 		drivers[name] = constructor
@@ -15,6 +17,9 @@ func Register(constructor ConnectionConstructor, scheme ...string) error {
 	return nil
 }
 
+// NewConnection opens a connection using the driver selected by d.Connection.
+// An empty connection string selects mem; a path without a scheme uses its
+// extension as the driver name.
 func NewConnection(d *Database) (Connection, error) {
 	var conn string
 	if d != nil {

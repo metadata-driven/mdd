@@ -98,7 +98,7 @@ models:
       - name: manager
         title: Manager
         type: user
-        lookup: 'from(users) order(login)'
+        lookup: 'from(users) where(permissions &= manage_users) order(login)'
 
       - name: best_friends
         title: Best friends

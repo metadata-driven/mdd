@@ -116,7 +116,7 @@ func (a *Application[C]) initPredefined() error {
 					}
 					values := make(driver.DataObject)
 					for _, col := range db.TableByName(item.table).Columns {
-						values[col.Name] = driver.Cast(col.Type, item.values[col.Name])
+						values[col.Name] = driver.Cast(item.values[col.Name], col.Type, false)
 					}
 					must(tx.Set(item.table, item.id, values))
 				}

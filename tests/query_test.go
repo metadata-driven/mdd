@@ -105,3 +105,36 @@ func assertIDs(t *testing.T, got, want []uint64) {
 		t.Errorf("got IDs %v, want %v", got, want)
 	}
 }
+
+func TestCollectionQueries(t *testing.T) {
+	app := NewApp()
+	defer app.Close()
+	err := app.Execute(nil, func(ctx *Context) {
+		manager := ctx.Users().Add().SetLogin("manager")
+		alice := ctx.Users().Add().SetLogin("alice").SetTags([]string{"read", "write", "quoted\"value"}).
+			SetPermissions([]*UserPermission{UserPermissionManageUsers, UserPermissionManageOrders}).SetFriends([]*User{manager})
+		bob := ctx.Users().Add().SetLogin("bob").SetTags([]string{"bread", "read-only"}).
+			SetPermissions([]*UserPermission{UserPermissionManageOrders})
+		ctx.Orders().Add().SetUser(alice)
+		ctx.Orders().Add().SetUser(bob)
+
+		assertIDs(t, ctx.Users().Query("where(tags &= read, write)").IDs(), []uint64{alice.ID()})
+		assertIDs(t, ctx.Users().Query(`where(tags &= "quoted\"value")`).IDs(), []uint64{alice.ID()})
+		assertIDs(t, ctx.Users().Query("where(tags &= rea)").IDs(), nil)
+		assertIDs(t, ctx.Users().Query("where(permissions &= manage_users, manage_orders)").IDs(), []uint64{UserSuperAdmin.ID(), alice.ID()})
+		assertIDs(t, ctx.Users().Where("permissions", "&=", UserPermissionManageUsers, UserPermissionManageOrders).IDs(), []uint64{UserSuperAdmin.ID(), alice.ID()})
+		assertIDs(t, ctx.Users().Where("friends", "&=", manager).IDs(), []uint64{alice.ID()})
+		assertIDs(t, ctx.Orders().Query("where(user.tags &= read, write)").IDs(), alice.Orders().IDs())
+		assertIDs(t, mdd.AttrSet[User](alice, "authorized_users").IDs(), []uint64{alice.ID(), UserSuperAdmin.ID()})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, query := range []string{"where(tags &= [])", "where(login &= alice)"} {
+		err := app.Execute(nil, func(ctx *Context) { ctx.Users().Query(query).Count() })
+		if err == nil {
+			t.Errorf("expected error for %s", query)
+		}
+	}
+}

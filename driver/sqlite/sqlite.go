@@ -5,13 +5,11 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	sqldriver "database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
-	"math/big"
 	"net/url"
 	"regexp"
 	"slices"
@@ -26,49 +24,13 @@ import (
 	sqlite "modernc.org/sqlite"
 )
 
+var _ = driver.Register(open, "sqlite", "sqlite3", "db")
+
 var memoryID atomic.Uint64
 
-func decodeJSON(data string) (any, error) {
-	if data == "" {
-		return nil, nil
-	}
-	decoder := json.NewDecoder(strings.NewReader(data))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return nil, err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return nil, errors.New("multiple JSON values")
-		}
-		return nil, err
-	}
-	return value, nil
-}
+const maxDecimalPrecision = 10
 
-func init() {
-	sqlite.MustRegisterDeterministicScalarFunction("mdd_decimal_add", 2, func(_ *sqlite.FunctionContext, v []sqldriver.Value) (sqldriver.Value, error) {
-		a, ok := new(big.Int).SetString(fmt.Sprint(v[0]), 10)
-		if !ok {
-			return nil, errors.New("invalid decimal")
-		}
-		b, ok := new(big.Int).SetString(fmt.Sprint(v[1]), 10)
-		if !ok {
-			return nil, errors.New("invalid decimal delta")
-		}
-		width := len(fmt.Sprint(v[0]))
-		limit := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(width-1)), nil)
-		a.Add(a, b)
-		if a.Sign() <= 0 || a.Cmp(new(big.Int).Mul(limit, big.NewInt(2))) >= 0 {
-			return nil, errors.New("decimal overflow")
-		}
-		return fmt.Sprintf("%0*s", width, a.String()), nil
-	})
-	_ = driver.Register(open, "sqlite", "sqlite3", "db")
-}
-
+// Connection provides access to a SQLite database.
 type Connection struct {
 	schema *driver.Database
 	db     *sql.DB
@@ -116,7 +78,11 @@ func open(schema *driver.Database) (driver.Connection, error) {
 	}
 	return c, nil
 }
+
+// Close closes the database connection pool.
 func (c *Connection) Close() error { return c.db.Close() }
+
+// OpenTransaction starts a SQLite transaction controlled by ctx.
 func (c *Connection) OpenTransaction(ctx context.Context) (driver.Transaction, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -143,15 +109,17 @@ func columnType(c *driver.Column) (string, error) {
 	case driver.TypeID, driver.TypeBoolean, driver.TypeInteger:
 		return "INTEGER NOT NULL DEFAULT 0", nil
 	case driver.TypeDecimal:
-		precision := decimalPrecision(c)
-		if precision < 1 || precision > 65 || c.Scale < 0 || c.Scale > precision {
-			return "", fmt.Errorf("sqlite: invalid decimal precision or scale for %s", c.Name)
+		precision := c.Precision
+		if precision == 0 {
+			precision = maxDecimalPrecision
 		}
-		z, err := encodeDecimal("0", c)
-		if err != nil {
-			return "", err
+		if precision < 1 || precision > maxDecimalPrecision {
+			return "", fmt.Errorf("sqlite: decimal precision for %s must be between 1 and %d", c.Name, maxDecimalPrecision)
 		}
-		return "TEXT NOT NULL DEFAULT '" + z + "'", nil
+		if c.Scale < 0 || c.Scale > precision {
+			return "", fmt.Errorf("sqlite: decimal scale for %s must be between 0 and %d", c.Name, precision)
+		}
+		return "REAL NOT NULL DEFAULT 0.0", nil
 	case driver.TypeString:
 		return "TEXT NOT NULL DEFAULT ''", nil
 	case driver.TypeDatetime:
@@ -165,12 +133,6 @@ func columnType(c *driver.Column) (string, error) {
 	}
 }
 
-func decimalPrecision(col *driver.Column) int {
-	if col.Precision == 0 {
-		return 38
-	}
-	return col.Precision
-}
 func (c *Connection) rebase() error {
 	ctx := context.Background()
 	tx, err := c.db.BeginTx(ctx, nil)
@@ -232,9 +194,6 @@ func (c *Connection) rebase() error {
 				return fmt.Errorf("sqlite: incompatible schema change for %s.%s", table.Name, col.Name)
 			}
 			if errors.Is(e, sql.ErrNoRows) {
-				if _, exists := cols[col.Name]; exists && col.Type == driver.TypeDecimal {
-					return fmt.Errorf("sqlite: cannot verify decimal format for existing column %s.%s", table.Name, col.Name)
-				}
 				if _, e = tx.ExecContext(ctx, `INSERT INTO "_mdd_sqlite_columns" (table_name,column_name,definition) VALUES (?,?,?)`, table.Name, col.Name, description); e != nil {
 					return lockError(e)
 				}
@@ -479,45 +438,14 @@ func migrateNotNull(ctx context.Context, tx *sql.Tx, table *driver.Table, existi
 	return nil
 }
 
-func decimalScaled(v any, col *driver.Column) (*big.Int, error) {
-	text, ok := v.(string)
-	if !ok {
-		text = fmt.Sprint(v)
+func decimalArgument(v any) (float64, error) {
+	n, err := strconv.ParseFloat(fmt.Sprint(v), 64)
+	if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
+		return 0, fmt.Errorf("sqlite: invalid decimal %v", v)
 	}
-	n, ok := new(big.Rat).SetString(text)
-	if !ok {
-		return nil, fmt.Errorf("sqlite: invalid decimal %v", v)
-	}
-	mul := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(col.Scale)), nil)
-	n.Mul(n, new(big.Rat).SetInt(mul))
-	if !n.IsInt() {
-		return nil, fmt.Errorf("sqlite: decimal exceeds scale %d", col.Scale)
-	}
-	limit := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimalPrecision(col))), nil)
-	if new(big.Int).Abs(n.Num()).Cmp(limit) >= 0 {
-		return nil, errors.New("sqlite: decimal overflow")
-	}
-	return new(big.Int).Set(n.Num()), nil
+	return n, nil
 }
-func encodeDecimal(v any, col *driver.Column) (string, error) {
-	n, err := decimalScaled(v, col)
-	if err != nil {
-		return "", err
-	}
-	base := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimalPrecision(col))), nil)
-	n.Add(n, base)
-	return fmt.Sprintf("%0*s", decimalPrecision(col)+1, n.String()), nil
-}
-func decodeDecimal(v string, col *driver.Column) (string, error) {
-	n, ok := new(big.Int).SetString(v, 10)
-	if !ok {
-		return "", errors.New("sqlite: invalid decimal encoding")
-	}
-	base := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimalPrecision(col))), nil)
-	n.Sub(n, base)
-	den := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(col.Scale)), nil)
-	return new(big.Rat).SetFrac(n, den).FloatString(col.Scale), nil
-}
+
 func argument(v any, col *driver.Column) (any, error) {
 	if col.Type == driver.TypeJSON {
 		return driver.JSONText(v)
@@ -528,7 +456,7 @@ func argument(v any, col *driver.Column) (any, error) {
 	}
 	switch col.Type {
 	case driver.TypeDecimal:
-		return encodeDecimal(v, col)
+		return decimalArgument(v)
 	case driver.TypeDatetime:
 		if value, ok := v.(time.Time); ok {
 			return value.Format("2006-01-02 15:04:05.000000"), nil
@@ -636,18 +564,20 @@ func (t *transaction) Get(table string, id uint64) (driver.DataObject, error) {
 			v = uint64(v.(int64))
 		case driver.TypeBoolean:
 			v = v.(int64) != 0
-		case driver.TypeDecimal, driver.TypeJSON:
+		case driver.TypeDecimal:
+			number, ok := v.(float64)
+			if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+				return nil, fmt.Errorf("sqlite: invalid real value in %s.%s: %v", table, c.Name, v)
+			}
+			v = strconv.FormatFloat(number, 'f', c.Scale, 64)
+		case driver.TypeJSON:
 			text, ok := v.(string)
 			if !ok {
 				return nil, fmt.Errorf("sqlite: invalid text value in %s.%s: %T", table, c.Name, v)
 			}
-			if c.Type == driver.TypeDecimal {
-				v, err = decodeDecimal(text, c)
-			} else {
-				v, err = decodeJSON(text)
-			}
+			v, err = decodeJSON(text)
 		case driver.TypeDatetime:
-			v = driver.Cast(driver.TypeDatetime, v)
+			v = driver.Cast(v, driver.TypeDatetime, false)
 		}
 		if err != nil {
 			return nil, err
@@ -748,12 +678,12 @@ func (t *transaction) Increment(table string, id uint64, data driver.DataObject)
 		}
 		q := quote(name)
 		if col.Type == driver.TypeDecimal {
-			n, e := decimalScaled(data[name], col)
+			n, e := decimalArgument(data[name])
 			if e != nil {
 				return e
 			}
-			set = append(set, q+"=mdd_decimal_add("+q+",?)")
-			args = append(args, n.String())
+			set = append(set, q+"=round(("+q+"+?)*1e14)/1e14")
+			args = append(args, n)
 		} else {
 			set = append(set, q+"="+q+"+?")
 			args = append(args, data[name])
@@ -795,6 +725,15 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		col, e := plan.Column(f.Source, name)
 		if e != nil {
 			return "", fmt.Errorf("sqlite: %w", e)
+		}
+		if f.Op == driver.OpContainsAll {
+			if col.Type != driver.TypeJSON {
+				return "", errors.New("sqlite: &= requires a JSON collection")
+			}
+			candidates, _ := json.Marshal(f.Values)
+			where = append(where, "mdd_json_contains_all("+col.SQL(quote)+", ?) = 1")
+			args = append(args, string(candidates))
+			continue
 		}
 		if col.Type == driver.TypeJSON {
 			return "", errors.New("sqlite: JSON filters are not supported")
