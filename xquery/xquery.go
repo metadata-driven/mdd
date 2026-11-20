@@ -36,19 +36,12 @@ func Parse(src string, args ...Args) (*Query, error) {
 }
 
 func parseFromArg(value string) (string, error) {
-	if value == "" {
-		return "", nil
+	for i := 0; i < len(value); i++ {
+		if !isTableNameByte(value[i]) {
+			return "", fmt.Errorf("xquery: invalid from argument %q", value)
+		}
 	}
-	tokens, err := lex(value)
-	if err != nil {
-		return "", fmt.Errorf("xquery: invalid from argument: %w", err)
-	}
-	p := parser{tokens: tokens}
-	from, err := p.parsePath(tSlash, '/')
-	if err != nil || p.peek().kind != tEOF || from != value {
-		return "", fmt.Errorf("xquery: invalid from argument %q", value)
-	}
-	return from, nil
+	return value, nil
 }
 
 type tokenKind uint8
@@ -56,6 +49,7 @@ type tokenKind uint8
 const (
 	tEOF tokenKind = iota
 	tWord
+	tTableName
 	tString
 	tNumber
 	tLParen
@@ -64,7 +58,6 @@ const (
 	tRBracket
 	tComma
 	tDot
-	tSlash
 	tOperator
 )
 
@@ -100,6 +93,17 @@ func lex(src string) ([]token, error) {
 			continue
 		}
 		start, startCol := i, col
+		if len(out) >= 2 && out[len(out)-1].kind == tLParen {
+			directive := out[len(out)-2]
+			if directive.kind == tWord && directive.text == "from" && isTableNameByte(c) {
+				for i < n && isTableNameByte(src[i]) {
+					i++
+				}
+				out = append(out, token{tTableName, src[start:i], line, startCol})
+				col += int32(i - start)
+				continue
+			}
+		}
 		if c == '"' {
 			i++
 			col++
@@ -197,6 +201,9 @@ func isNumberStart(src string, i int) bool {
 func isSpace(c byte) bool  { return c == ' ' || c == '\t' || c == '\r' || c == '\n' }
 func isDigit(c byte) bool  { return c >= '0' && c <= '9' }
 func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
+func isTableNameByte(c byte) bool {
+	return isLetter(c) || isDigit(c) || c == '_' || c == '-' || c == '.'
+}
 func isNumberByte(c byte) bool {
 	return isDigit(c) || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-'
 }
@@ -218,8 +225,6 @@ func punctuationKind(c byte) tokenKind {
 		return tComma
 	case '.':
 		return tDot
-	case '/':
-		return tSlash
 	default:
 		return tEOF
 	}
@@ -294,7 +299,9 @@ func (p *parser) parse() (*Query, error) {
 			if p.query.From != "" {
 				return nil, p.errorf(name, "from may appear only once")
 			}
-			p.query.From, err = p.parsePath(tSlash, '/')
+			var table token
+			table, err = p.take(tTableName, "table name")
+			p.query.From = table.text
 		case "select":
 			err = p.parseSelect()
 		case "where":
@@ -328,32 +335,27 @@ func (p *parser) parse() (*Query, error) {
 	return &p.query, nil
 }
 
-func (p *parser) parsePath(separator tokenKind, separatorByte byte) (string, error) {
+func (p *parser) parseField() (Field, error) {
 	first, err := p.take(tWord, "name")
 	if err != nil {
 		return "", err
 	}
-	if p.peek().kind != separator {
-		return first.text, nil
+	if p.peek().kind != tDot {
+		return Field(first.text), nil
 	}
 	var path strings.Builder
 	path.Grow(len(first.text) + 16)
 	path.WriteString(first.text)
-	for p.peek().kind == separator {
+	for p.peek().kind == tDot {
 		p.pos++
 		next, err := p.take(tWord, "name")
 		if err != nil {
 			return "", err
 		}
-		path.WriteByte(separatorByte)
+		path.WriteByte('.')
 		path.WriteString(next.text)
 	}
-	return path.String(), nil
-}
-
-func (p *parser) parseField() (Field, error) {
-	field, err := p.parsePath(tDot, '.')
-	return Field(field), err
+	return Field(path.String()), nil
 }
 
 func (p *parser) parseSelect() error {

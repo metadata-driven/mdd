@@ -13,7 +13,7 @@ Example:
 ```text
 # Select orders
 
-from(billing/orders)
+from(billing.orders)
 
 select(
     icon,
@@ -39,7 +39,7 @@ offset(200)
 Single-line form:
 
 ```text
-from(billing/orders) select(icon,ts,status,user.name,amount) where(status=done,canceled) where(amount>1) order(user.type asc,ts desc) limit(100) offset(200)
+from(billing.orders) select(icon,ts,status,user.name,amount) where(status=done,canceled) where(amount>1) order(user.type asc,ts desc) limit(100) offset(200)
 ```
 
 Directives can appear in any order.
@@ -61,7 +61,7 @@ A comment extends to the end of the line.
 Examples:
 
 ```text
-from(billing/orders) // source
+from(billing.orders) // source
 
 where(status = done) # completed orders only
 ```
@@ -116,20 +116,18 @@ the `"from"` argument when calling the parser.
 
 # from
 
-Specify the source as a path:
+Specify the source as an unquoted table name. It must contain at least one
+character and can use ASCII letters, digits, underscores, hyphens, and dots.
+Dots are part of the name; the parser does not split it into components.
+Slashes are not allowed in table names. The same rules apply to the parser's
+`"from"` argument.
 
 ```text
 from(users)
 
-from(billing/orders)
+from(billing.orders)
 
-from(system/archive/orders)
-```
-
-Path separator:
-
-```text
-/
+from(2026-orders_archive)
 ```
 
 ---
@@ -616,7 +614,7 @@ You can omit `from(...)` from the query text if you pass the source as a parser
 argument:
 
 ```go
-query, err := Parse(`select(id, user.name)`, Args{"from": "billing/orders"})
+query, err := Parse(`select(id, user.name)`, Args{"from": "billing.orders"})
 ```
 
 An explicit `from(...)` directive takes precedence over the `"from"` argument.
@@ -648,25 +646,13 @@ type Order struct {
 }
 ```
 
-`From` is stored as a single string with `/`-separated components:
+`From` stores the table name as written:
 
 ```go
-query.From // "billing/orders"
+query.From // "billing.orders"
 ```
 
-To get the individual components, use:
-
-```go
-func (q *Query) FromParts() []string
-```
-
-Example result:
-
-```go
-[]string{"billing", "orders"}
-```
-
-A field path is also stored as a single string, with `.`-separated components:
+A field path is stored as a single string, with `.`-separated components:
 
 ```go
 field := Field("user.profile.avatar")
@@ -732,7 +718,7 @@ func (q *Query) String() string
 Example:
 
 ```text
-from(billing/orders) select(id, user.name) where(status = "done") order(ts desc) limit(10) offset("next-page")
+from(billing.orders) select(id, user.name) where(status = "done") order(ts desc) limit(10) offset("next-page")
 ```
 
 Canonical formatting rules:
@@ -762,7 +748,7 @@ Example:
 
 ```json
 {
-  "from": "billing/orders",
+  "from": "billing.orders",
   "select": ["id", "user.name"],
   "where": [
     {
@@ -902,6 +888,15 @@ directive =
     | order-directive
     | limit-directive
     | offset-directive
+
+from-directive =
+    "from" "(" table-name ")"
+
+table-name =
+    table-name-character { table-name-character }
+
+table-name-character =
+    letter | digit | "_" | "-" | "."
 
 where-expression =
     field

@@ -37,14 +37,6 @@ func (q *Query) AddFilter(name, op string, values ...any) {
 	q.Where = append(q.Where, Condition{Field: Field(name), Op: op, Values: values})
 }
 
-// FromParts returns the source components separated by slashes.
-func (q *Query) FromParts() []string {
-	if q == nil || q.From == "" {
-		return nil
-	}
-	return strings.Split(q.From, "/")
-}
-
 // IsEmpty reports whether the query is guaranteed to return no results.
 func (q *Query) IsEmpty() bool {
 	if q == nil {

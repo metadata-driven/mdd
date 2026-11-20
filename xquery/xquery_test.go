@@ -12,7 +12,7 @@ import (
 func TestParseExample(t *testing.T) {
 	const src = `
 		# Orders
-		from(billing/orders)
+		from(billing.2orders_archive-2026)
 		select(icon, ts, status, user.name, amount,)
 		where(status = done, canceled)
 		where(user.type not in ["guest", moderator])
@@ -23,8 +23,7 @@ func TestParseExample(t *testing.T) {
 	`
 	q, err := Parse(src)
 	require(t, err == nil, "Parse returned an error: ", err)
-	assertEqual(t, q.From, "billing/orders")
-	assertEqual(t, q.FromParts(), []string{"billing", "orders"})
+	assertEqual(t, q.From, "billing.2orders_archive-2026")
 	assertEqual(t, len(q.Select), 5)
 	assertEqual(t, q.Select[3], Field("user.name"))
 	assertEqual(t, q.Select[3].Parts(), []string{"user", "name"})
@@ -114,10 +113,10 @@ func TestOffsetString(t *testing.T) {
 }
 
 func TestFromArgument(t *testing.T) {
-	q, err := Parse(`select(id) where(active = true)`, Args{"from": "billing/users"})
+	q, err := Parse(`select(id) where(active = true)`, Args{"from": "2026-billing.users_archive"})
 	require(t, err == nil, "Parse returned an error: ", err)
-	assertEqual(t, q.From, "billing/users")
-	assertEqual(t, q.String(), `from(billing/users) select(id) where(active = true)`)
+	assertEqual(t, q.From, "2026-billing.users_archive")
+	assertEqual(t, q.String(), `from(2026-billing.users_archive) select(id) where(active = true)`)
 }
 
 func TestExplicitFromTakesPrecedenceOverArgument(t *testing.T) {
@@ -150,10 +149,10 @@ func TestEscapedStringAndFlattenedNestedArray(t *testing.T) {
 }
 
 func TestQueryJSON(t *testing.T) {
-	q, err := Parse(`from(billing/orders) select(id, user.name) where(status = done) order(ts desc) limit(10) offset("next")`)
+	q, err := Parse(`from(billing.orders) select(id, user.name) where(status = done) order(ts desc) limit(10) offset("next")`)
 	require(t, err == nil, "Parse returned an error: ", err)
 
-	assertEqual(t, toJSON(q), `{"from":"billing/orders","select":["id","user.name"],"where":[{"field":"status","op":"=","values":["done"]}],"order":[{"field":"ts","desc":true}],"limit":10,"offset":"next"}`)
+	assertEqual(t, toJSON(q), `{"from":"billing.orders","select":["id","user.name"],"where":[{"field":"status","op":"=","values":["done"]}],"order":[{"field":"ts","desc":true}],"limit":10,"offset":"next"}`)
 }
 
 func TestQueryJSONDoesNotExposeEmptyState(t *testing.T) {
@@ -164,7 +163,7 @@ func TestQueryJSONDoesNotExposeEmptyState(t *testing.T) {
 
 func TestQueryStringRoundTrip(t *testing.T) {
 	const src = `
-		from(billing/orders)
+		from(billing.orders)
 		select(id, user.name)
 		where(status = done, canceled)
 		where(amount >= 12.5)
@@ -175,7 +174,7 @@ func TestQueryStringRoundTrip(t *testing.T) {
 	`
 	q, err := Parse(src)
 	require(t, err == nil, "Parse returned an error: ", err)
-	assertEqual(t, q.String(), `from(billing/orders) select(id, user.name) where(status = "done", "canceled") where(amount >= 12.5) where(parent != null) order(user.name, ts desc) limit(10) offset("next-page")`)
+	assertEqual(t, q.String(), `from(billing.orders) select(id, user.name) where(status = "done", "canceled") where(amount >= 12.5) where(parent != null) order(user.name, ts desc) limit(10) offset("next-page")`)
 
 	q2, err := Parse(q.String())
 	require(t, err == nil, "Round-trip parse returned an error: ", err)
@@ -225,7 +224,7 @@ func TestArgumentErrors(t *testing.T) {
 	}{
 		{"missing from", nil},
 		{"empty from", []Args{{"from": ""}}},
-		{"invalid from", []Args{{"from": "billing//users"}}},
+		{"invalid from", []Args{{"from": "billing/users"}}},
 		{"multiple argument sets", []Args{{"from": "users"}, {"from": "orders"}}},
 	}
 	for _, tt := range tests {

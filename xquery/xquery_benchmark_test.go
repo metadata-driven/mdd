@@ -5,7 +5,7 @@ import "testing"
 func BenchmarkParse(b *testing.B) {
 	const src = `
 		# Orders query
-		from(billing/orders)
+		from(billing.orders)
 		select(
 			icon,
 			ts,
