@@ -6,7 +6,6 @@ import (
 	"maps"
 	"reflect"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/metadata-driven/mdd/driver"
@@ -68,10 +67,13 @@ func (s *schema) resolveQueryField(root *metaTable, query *driver.Query, name st
 		panic(fmt.Errorf("mdd: empty query field on %s", root.Name))
 	}
 	current := root
-	parts := strings.Split(name, ".")
-	for i, part := range parts {
-		if part == "id" && i == len(parts)-1 {
-			return strings.Join(parts[:i], "."), "id", nil
+	source := ""
+	end := 0
+	for part := range xquery.Field(name).Parts() {
+		end += len(part)
+		last := end == len(name)
+		if last && part == "id" {
+			return source, "id", nil
 		}
 		attr := current.Attrs[part]
 		if attr == nil || attr.column == nil || attr.table == nil || attr.table.Table == nil {
@@ -83,27 +85,30 @@ func (s *schema) resolveQueryField(root *metaTable, query *driver.Query, name st
 		if attr.table.Table != current.Table {
 			panic(fmt.Errorf("mdd: query field %s.%s is not stored in its model's primary table", root.Name, name))
 		}
-		if i == len(parts)-1 {
-			return strings.Join(parts[:i], "."), attr.column.Name, attr
+		if last {
+			return source, attr.column.Name, attr
 		}
+		alias := name[:end]
 		info := attr.Type()
 		if info.Collection || info.Set || info.Target == nil || info.Target.Kind() != meta.KindModel {
-			panic(fmt.Errorf("mdd: query path %s.%s is not a single model reference", root.Name, strings.Join(parts[:i+1], ".")))
+			panic(fmt.Errorf("mdd: query path %s.%s is not a single model reference", root.Name, alias))
 		}
 		target := s.tables[info.Target.Path()]
 		if target == nil || target.Table == nil || target.Database == nil {
 			panic(fmt.Errorf("mdd: query reference %s has no storage table", info.Target.Path()))
 		}
 		if target.Database != root.Database {
-			panic(fmt.Errorf("mdd: query path %s.%s joins different databases", root.Name, strings.Join(parts[:i+1], ".")))
+			panic(fmt.Errorf("mdd: query path %s.%s joins different databases", root.Name, alias))
 		}
 		addQueryJoins(query, driver.QueryJoin{
-			Source: strings.Join(parts[:i], "."),
+			Source: source,
 			Column: attr.column.Name,
 			Table:  target.Table.Name,
-			Alias:  strings.Join(parts[:i+1], "."),
+			Alias:  alias,
 		})
 		current = target
+		source = alias
+		end++
 	}
 	panic(fmt.Errorf("mdd: invalid query field %s.%s", root.Name, name))
 }

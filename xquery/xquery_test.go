@@ -5,6 +5,7 @@ import (
 	"log"
 	"math"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -26,7 +27,7 @@ func TestParseExample(t *testing.T) {
 	assertEqual(t, q.From, "billing.2orders_archive-2026")
 	assertEqual(t, len(q.Select), 5)
 	assertEqual(t, q.Select[3], Field("user.name"))
-	assertEqual(t, q.Select[3].Parts(), []string{"user", "name"})
+	assertEqual(t, slices.Collect(q.Select[3].Parts()), []string{"user", "name"})
 	assertEqual(t, len(q.Where), 3)
 	assertEqual(t, q.Where[0].Op, "=")
 	assertEqual(t, q.Where[0].Values, []any{"done", "canceled"})

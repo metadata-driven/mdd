@@ -3,6 +3,7 @@ package xquery
 import (
 	"encoding/json"
 	"fmt"
+	"iter"
 	"strings"
 )
 
@@ -55,12 +56,13 @@ func (f Field) String() string {
 	return string(f)
 }
 
-// Parts returns the field components separated by dots.
-func (f Field) Parts() []string {
+// Parts returns a single-use iterator over the field's dot-separated components.
+// An empty field yields no components.
+func (f Field) Parts() iter.Seq[string] {
 	if f == "" {
-		return nil
+		return func(func(string) bool) {}
 	}
-	return strings.Split(string(f), ".")
+	return strings.SplitSeq(string(f), ".")
 }
 
 // String returns the canonical xquery representation of the query.

@@ -655,14 +655,19 @@ A field path is stored as a single string, with `.`-separated components:
 ```go
 field := Field("user.profile.avatar")
 field.String() // "user.profile.avatar"
-field.Parts()  // []string{"user", "profile", "avatar"}
+for part := range field.Parts() {
+    fmt.Println(part)
+}
 ```
+
+`Parts` yields the components in order without building a slice. The
+iterator is single-use, and an empty field yields no components.
 
 `Field` methods:
 
 ```go
 func (f Field) String() string
-func (f Field) Parts() []string
+func (f Field) Parts() iter.Seq[string]
 ```
 
 `Condition.Values` has type `[]any`. After parsing, its elements have these types:
