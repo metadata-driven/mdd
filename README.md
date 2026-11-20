@@ -2,11 +2,13 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/metadata-driven/mdd.svg)](https://pkg.go.dev/github.com/metadata-driven/mdd)
 
-A Go framework for building applications from [MDD metadata](https://github.com/metadata-driven/spec). It provides a runtime for models, transactions, queries, storage, templates, and application logic.
+MDD for Go is a framework that implements the [Metadata-Driven Development (MDD) approach](https://github.com/metadata-driven/spec). It provides a runtime for models, transactions, queries, storage, templates, and application logic.
 
 ## What is MDD?
 
-Metadata-Driven Development (MDD) is a set of principles for describing an application's structure in a shared model, typically as YAML metadata files. The same model gives business teams, developers, administrators, DevOps engineers, and AI agents a common language: they can discuss the same entities, attributes, relationships, and operations using the same names and concepts.
+Metadata-Driven Development (MDD) is an architectural approach to designing information systems based on metadata. The metadata describes a shared model of the system that serves as the basis for its subsystems and applications.
+
+MDD metadata is typically written in YAML. The shared model gives business teams, developers, administrators, DevOps engineers, and AI agents a common language for discussing entities, attributes, relationships, and operations.
 
 The description goes beyond a physical database schema. It captures logical models and their relationships, presentation details, enumerations, queries, and storage choices. It can serve as the basis for database schemas, application code, editors, forms, and templates. These are uses of the metadata, not a claim that this repository already generates all of them.
 
