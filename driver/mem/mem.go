@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"reflect"
 	"sync"
@@ -28,6 +29,7 @@ type SaveFunc func(*Snapshot) error
 // Connection stores database records in memory.
 type Connection struct {
 	schema *driver.Database
+	unique map[*driver.Table][]uniqueIndex
 	gate   chan struct{}
 	state  *Snapshot
 	save   SaveFunc
@@ -53,13 +55,12 @@ func ValidateIndexes(schema *driver.Database) error {
 				continue
 			}
 			for _, name := range index.Columns {
-				for _, col := range table.Columns {
-					if col != nil && col.Name == name && col.Type == driver.TypeFile {
-						return fmt.Errorf("index %s.%s cannot include file column %q", table.Name, index.Name, name)
-					}
-					if col != nil && col.Name == name && col.Type == driver.TypeJSON {
-						return fmt.Errorf("index %s.%s cannot include JSON column %q", table.Name, index.Name, name)
-					}
+				col := table.ColumnByName(name)
+				if col != nil && col.Type == driver.TypeFile {
+					return fmt.Errorf("index %s.%s cannot include file column %q", table.Name, index.Name, name)
+				}
+				if col != nil && col.Type == driver.TypeJSON {
+					return fmt.Errorf("index %s.%s cannot include JSON column %q", table.Name, index.Name, name)
 				}
 			}
 		}
@@ -76,7 +77,7 @@ func NewConnection(schema *driver.Database, initial *Snapshot, save SaveFunc) (*
 	if err := ValidateIndexes(schema); err != nil {
 		return nil, fmt.Errorf("mem: %w", err)
 	}
-	c := &Connection{schema: schema, gate: make(chan struct{}, 1), save: save}
+	c := &Connection{schema: schema, unique: make(map[*driver.Table][]uniqueIndex), gate: make(chan struct{}, 1), save: save}
 	c.gate <- struct{}{}
 	c.state = copySnapshot(initial)
 	for _, table := range schema.Tables {
@@ -102,26 +103,17 @@ func NewConnection(schema *driver.Database, initial *Snapshot, save SaveFunc) (*
 				c.state.Sequences[table.Name] = id
 			}
 		}
-		for _, idx := range table.Indexes {
-			if idx == nil || idx.Type != driver.IndexTypeUnique {
-				continue
-			}
-			if len(idx.Columns) == 0 {
-				return nil, fmt.Errorf("mem: unique index %s.%s has no columns", table.Name, idx.Name)
-			}
-			for _, name := range idx.Columns {
-				if name == "id" {
-					continue
-				}
-				col := table.ColumnByName(name)
-				if col == nil || col.Type == driver.TypeJSON {
-					return nil, fmt.Errorf("mem: invalid unique index column %s.%s", table.Name, name)
-				}
-			}
+		indexes, err := resolveUniqueIndexes(table)
+		if err != nil {
+			return nil, err
 		}
-		for id, row := range c.state.Tables[table.Name] {
-			if err := checkUnique(table, c.state.Tables[table.Name], id, row); err != nil {
-				return nil, err
+		if len(indexes) != 0 {
+			c.unique[table] = indexes
+			rows := c.state.Tables[table.Name]
+			for id, row := range rows {
+				if err := checkUnique(table.Name, indexes, rows, id, row); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
@@ -198,23 +190,24 @@ func (t *transaction) Rollback() {
 		t.finish()
 	}
 }
-func (t *transaction) table(name string) (map[uint64]driver.DataObject, error) {
+func (t *transaction) table(name string) (*driver.Table, map[uint64]driver.DataObject, error) {
 	if err := t.check(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if t.conn.schema.TableByName(name) == nil {
-		return nil, fmt.Errorf("mem: unknown table %q", name)
+	table := t.conn.schema.TableByName(name)
+	if table == nil {
+		return nil, nil, fmt.Errorf("mem: unknown table %q", name)
 	}
-	return t.state.Tables[name], nil
+	return table, t.state.Tables[name], nil
 }
 func (t *transaction) Get(table string, id uint64) (driver.DataObject, error) {
-	rows, err := t.table(table)
+	tab, rows, err := t.table(table)
 	if err != nil {
 		return nil, err
 	}
 	if row, ok := rows[id]; ok {
 		result := copyObject(row)
-		for _, col := range t.conn.schema.TableByName(table).Columns {
+		for _, col := range tab.Columns {
 			value := result[col.Name]
 			switch col.Type {
 			case driver.TypeJSON:
@@ -267,13 +260,13 @@ func canonicalValue(typ driver.DataType, value any) bool {
 }
 
 func (t *transaction) Set(table string, id uint64, values driver.DataObject) (uint64, error) {
-	rows, err := t.table(table)
+	tab, rows, err := t.table(table)
 	if err != nil {
 		return 0, err
 	}
 	normalized := make(driver.DataObject, len(values))
 	for name, value := range values {
-		col := t.conn.schema.TableByName(table).ColumnByName(name)
+		col := tab.ColumnByName(name)
 		if name == "id" || col == nil {
 			return 0, fmt.Errorf("mem: unknown or reserved column %q", name)
 		}
@@ -290,20 +283,19 @@ func (t *transaction) Set(table string, id uint64, values driver.DataObject) (ui
 		id = t.state.Sequences[table] + 1
 	}
 	row, ok := rows[id]
+	indexes := t.conn.unique[tab]
 	var candidate driver.DataObject
 	if !ok {
 		candidate = driver.DataObject{}
-		for _, col := range t.conn.schema.TableByName(table).Columns {
+		for _, col := range tab.Columns {
 			candidate[col.Name] = driver.DefaultValue(col.Type)
 		}
-	} else if hasUnique(t.conn.schema.TableByName(table)) {
+	} else if len(indexes) != 0 {
 		candidate = copyObject(row)
 	}
-	if hasUnique(t.conn.schema.TableByName(table)) {
-		for name, value := range normalized {
-			candidate[name] = value
-		}
-		if err := checkUnique(t.conn.schema.TableByName(table), rows, id, candidate); err != nil {
+	if len(indexes) != 0 {
+		maps.Copy(candidate, normalized)
+		if err := checkUnique(table, indexes, rows, id, candidate); err != nil {
 			return 0, err
 		}
 	}
@@ -324,34 +316,51 @@ func (t *transaction) Set(table string, id uint64, values driver.DataObject) (ui
 	return id, nil
 }
 
-func hasUnique(table *driver.Table) bool {
-	for _, idx := range table.Indexes {
-		if idx != nil && idx.Type == driver.IndexTypeUnique {
-			return true
-		}
-	}
-	return false
+type uniqueIndex struct {
+	name    string
+	columns []*driver.Column
 }
 
-func checkUnique(table *driver.Table, rows map[uint64]driver.DataObject, id uint64, candidate driver.DataObject) error {
+func resolveUniqueIndexes(table *driver.Table) ([]uniqueIndex, error) {
+	var indexes []uniqueIndex
 	for _, idx := range table.Indexes {
 		if idx == nil || idx.Type != driver.IndexTypeUnique {
 			continue
 		}
+		if len(idx.Columns) == 0 {
+			return nil, fmt.Errorf("mem: unique index %s.%s has no columns", table.Name, idx.Name)
+		}
+		cols := make([]*driver.Column, 0, len(idx.Columns))
+		hasID := false
+		for _, name := range idx.Columns {
+			if name == "id" {
+				hasID = true
+				continue
+			}
+			col := table.ColumnByName(name)
+			if col == nil || col.Type == driver.TypeJSON {
+				return nil, fmt.Errorf("mem: invalid unique index column %s.%s", table.Name, name)
+			}
+			cols = append(cols, col)
+		}
+		if !hasID {
+			indexes = append(indexes, uniqueIndex{name: idx.Name, columns: cols})
+		}
+	}
+	return indexes, nil
+}
+
+func checkUnique(table string, indexes []uniqueIndex, rows map[uint64]driver.DataObject, id uint64, candidate driver.DataObject) error {
+	for _, idx := range indexes {
 		for otherID, row := range rows {
 			if otherID == id {
 				continue
 			}
 			equal := true
-			for _, name := range idx.Columns {
-				if name == "id" {
-					equal = false
-					break
-				}
-				col := table.ColumnByName(name)
-				comparison, err := compare(candidate[name], row[name], col.Type)
+			for _, col := range idx.columns {
+				comparison, err := compare(candidate[col.Name], row[col.Name], col.Type)
 				if err != nil {
-					return fmt.Errorf("mem: unique index %s.%s: %w", table.Name, idx.Name, err)
+					return fmt.Errorf("mem: unique index %s.%s: %w", table, idx.name, err)
 				}
 				if comparison != 0 {
 					equal = false
@@ -359,7 +368,7 @@ func checkUnique(table *driver.Table, rows map[uint64]driver.DataObject, id uint
 				}
 			}
 			if equal {
-				return fmt.Errorf("mem: unique index %s.%s conflicts with record %d", table.Name, idx.Name, otherID)
+				return fmt.Errorf("mem: unique index %s.%s conflicts with record %d", table, idx.name, otherID)
 			}
 		}
 	}
@@ -367,7 +376,7 @@ func checkUnique(table *driver.Table, rows map[uint64]driver.DataObject, id uint
 }
 
 func (t *transaction) Delete(table string, id uint64) error {
-	rows, err := t.table(table)
+	_, rows, err := t.table(table)
 	if err != nil {
 		return err
 	}

@@ -30,9 +30,16 @@ type Plan struct {
 
 // Resolve validates every join, including joins unused by filters or ordering.
 func Resolve(database *driver.Database, q *driver.Query) (*Plan, error) {
-	table, index, err := database.ResolveQuery(q.Table, q.Index)
-	if err != nil {
-		return nil, err
+	table := database.TableByName(q.Table)
+	if table == nil {
+		return nil, fmt.Errorf("unknown table %q", q.Table)
+	}
+	var index *driver.Index
+	if q.Index != "" {
+		index = table.IndexByName(q.Index)
+		if index == nil {
+			return nil, fmt.Errorf("unknown index %q on table %q", q.Index, q.Table)
+		}
 	}
 	p := &Plan{
 		Sources: []Source{{Table: table}},

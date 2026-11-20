@@ -120,9 +120,6 @@ func (t *transaction) readFile(table string, id uint64, field string) (io.ReadCl
 }
 
 func (t *transaction) Get(entity string, id uint64) (obj driver.DataObject, err error) {
-	if t.conn.scheme.TableByName(entity) == nil {
-		return nil, fmt.Errorf("mysql: unknown table %q", entity)
-	}
 	objects, err := t.MultiGet(entity, []uint64{id})
 	if err != nil {
 		return nil, err
@@ -137,10 +134,14 @@ func (t *transaction) MultiGet(entity string, ids []uint64) (objs []driver.DataO
 	if len(ids) == 0 {
 		return []driver.DataObject{}, nil
 	}
+	table := t.conn.scheme.TableByName(entity)
+	if table == nil {
+		return nil, fmt.Errorf("mysql: unknown table %q", entity)
+	}
 
 	// "SELECT col,... FROM %s WHERE id IN(<id,...>)", escName(entity))
 	// todo: cache q,cc by entity
-	cc := t.conn.scheme.TableByName(entity).Columns
+	cc := table.Columns
 	q := bytes.NewBufferString("SELECT id")
 	pp := make([]any, len(cc))
 	for i, col := range cc {
@@ -758,7 +759,7 @@ func (t *transaction) AlterTableColumn(tableName string, col *driver.Column, old
 	// todo: drop and create column on Error 1366: Incorrect integer value: '' for column 'brand' at row 1
 }
 
-func (t *transaction) AddTableIndex(tableName string, idx *driver.Index) {
+func (t *transaction) addTableIndex(table *driver.Table, idx *driver.Index) {
 	var idxType string
 	switch idx.Type {
 	case driver.IndexTypeIndex, "":
@@ -766,9 +767,9 @@ func (t *transaction) AddTableIndex(tableName string, idx *driver.Index) {
 	case driver.IndexTypeUnique:
 		idxType = "UNIQUE"
 		for _, name := range idx.Columns {
-			col := t.conn.scheme.TableByName(tableName).ColumnByName(name)
+			col := table.ColumnByName(name)
 			if col != nil && ((col.Type == driver.TypeBinary && dbColumnType(col) == "longblob") || col.Type == driver.TypeFile || col.Type == driver.TypeJSON) {
-				panic(fmt.Errorf("mysql: unique index %s cannot index %s.%s in full", idx.Name, tableName, name))
+				panic(fmt.Errorf("mysql: unique index %s cannot index %s.%s in full", idx.Name, table.Name, name))
 			}
 		}
 	case driver.IndexTypeFulltext:
@@ -778,7 +779,7 @@ func (t *transaction) AddTableIndex(tableName string, idx *driver.Index) {
 	}
 	t.exec(fmt.Sprintf(
 		"ALTER TABLE %s ADD %s INDEX %s(`%s`) COMMENT 'mdd managed'",
-		escName(tableName),
+		escName(table.Name),
 		idxType,
 		escName(idx.Name),
 		strings.Join(idx.Columns, "`,`"),

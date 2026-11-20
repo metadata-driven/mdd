@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/url"
-	"slices"
 	"strings"
 
 	"github.com/goldic/js"
@@ -80,10 +79,13 @@ func (c *Connection) Rebase() (err error) {
 
 	tx := noErrVal(newTransaction(c, context.Background()))
 	defer tx.Rollback()
-	dbTabs := tx.Tables()
+	dbTabs := make(map[string]struct{})
+	for _, name := range tx.Tables() {
+		dbTabs[name] = struct{}{}
+	}
 	for _, tab := range c.scheme.Tables {
 		//println("- REBASE TABLE ", tab.Name)
-		if !slices.Contains(dbTabs, tab.Name) {
+		if _, exists := dbTabs[tab.Name]; !exists {
 			tx.CreateTable(tab.Name)
 		}
 		dbCols := map[string]*dbColumnInfo{}
@@ -132,10 +134,10 @@ func (c *Connection) Rebase() (err error) {
 				idxType = driver.IndexTypeIndex
 			}
 			if dbIdx := dbIdxs[idx.Name]; dbIdx == nil {
-				tx.AddTableIndex(tab.Name, idx)
+				tx.addTableIndex(tab, idx)
 			} else if !dbIdx.Managed || dbIdx.Type != idxType || strings.Join(dbIdx.Columns, ",") != strings.Join(idx.Columns, ",") {
 				tx.DropTableIndex(tab.Name, idx.Name)
-				tx.AddTableIndex(tab.Name, idx)
+				tx.addTableIndex(tab, idx)
 			}
 			delete(dbIdxs, idx.Name)
 		}

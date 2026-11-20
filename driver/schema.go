@@ -3,11 +3,7 @@
 // translate them into database-specific definitions.
 package driver
 
-import (
-	"fmt"
-	"net/url"
-	"strings"
-)
+import "net/url"
 
 type (
 	// Database contains the tables in a database schema.
@@ -20,6 +16,8 @@ type (
 		Connection string `json:"connection"`
 
 		Tables []*Table `json:"tables"`
+
+		tablesByName map[string]*Table
 	}
 
 	// Table describes a table and its columns and indexes. Every table has a
@@ -32,6 +30,9 @@ type (
 
 		Columns []*Column `json:"columns"`
 		Indexes []*Index  `json:"indexes,omitempty"`
+
+		columnsByName map[string]*Column
+		indexesByName map[string]*Index
 	}
 
 	// Column describes a stored value.
@@ -87,23 +88,28 @@ func (t *Database) ConnectionURL() *url.URL {
 
 // TableByName returns the named table, or nil if it is absent.
 func (t *Database) TableByName(name string) *Table {
-	for _, tab := range t.Tables {
-		if tab.Name == name {
-			return tab
+	if t.tablesByName == nil {
+		t.tablesByName = make(map[string]*Table, len(t.Tables))
+		for _, table := range t.Tables {
+			if table != nil && t.tablesByName[table.Name] == nil {
+				t.tablesByName[table.Name] = table
+			}
 		}
 	}
-	return nil
+	return t.tablesByName[name]
 }
 
 // ColumnByName returns the named column, or nil if it is absent.
 func (t *Table) ColumnByName(name string) *Column {
-	// todo: add cache
-	for _, col := range t.Columns {
-		if col.Name == name {
-			return col
+	if t.columnsByName == nil {
+		t.columnsByName = make(map[string]*Column, len(t.Columns))
+		for _, column := range t.Columns {
+			if column != nil && t.columnsByName[column.Name] == nil {
+				t.columnsByName[column.Name] = column
+			}
 		}
 	}
-	return nil
+	return t.columnsByName[name]
 }
 
 // ColumnsByName returns columns in the supplied order, with nil for missing names.
@@ -117,19 +123,20 @@ func (t *Table) ColumnsByName(name ...string) []*Column {
 
 // IndexByName returns the named index, or nil if it is absent.
 func (t *Table) IndexByName(name string) *Index {
-	// todo: add cache
-	for _, idx := range t.Indexes {
-		if idx.Name == name {
-			return idx
+	if t.indexesByName == nil {
+		t.indexesByName = make(map[string]*Index, len(t.Indexes))
+		for _, index := range t.Indexes {
+			if index != nil && t.indexesByName[index.Name] == nil {
+				t.indexesByName[index.Name] = index
+			}
 		}
 	}
-	return nil
+	return t.indexesByName[name]
 }
 
 // IndexColumns returns the index's columns in order, or nil if the index is absent.
 // A missing column is represented by nil.
 func (t *Table) IndexColumns(idxName string) []*Column {
-	// todo: add cache
 	idx := t.IndexByName(idxName)
 	if idx == nil {
 		return nil
@@ -139,53 +146,4 @@ func (t *Table) IndexColumns(idxName string) []*Column {
 		cols[i] = t.ColumnByName(colName)
 	}
 	return cols
-}
-
-// ResolveQuery resolves the table and optional index named by a query.
-func (d *Database) ResolveQuery(tableName, indexName string) (*Table, *Index, error) {
-	table := d.TableByName(tableName)
-	if table == nil {
-		return nil, nil, fmt.Errorf("unknown table %q", tableName)
-	}
-	if indexName == "" {
-		return table, nil, nil
-	}
-	index := table.IndexByName(indexName)
-	if index == nil {
-		return nil, nil, fmt.Errorf("unknown index %q on table %q", indexName, tableName)
-	}
-	return table, index, nil
-}
-
-// ResolveQuerySource finds a table or index by name. A table/index path
-// identifies an index on a specific table; ambiguous index names are rejected.
-func (d *Database) ResolveQuerySource(from string) (*Table, *Index, error) {
-	if tableName, indexName, ok := strings.Cut(from, "/"); ok {
-		table := d.TableByName(tableName)
-		if table == nil {
-			return nil, nil, fmt.Errorf("unknown table %q", tableName)
-		}
-		index := table.IndexByName(indexName)
-		if index == nil {
-			return nil, nil, fmt.Errorf("unknown index %q on table %q", indexName, tableName)
-		}
-		return table, index, nil
-	}
-	if table := d.TableByName(from); table != nil {
-		return table, nil, nil
-	}
-	var foundTable *Table
-	var foundIndex *Index
-	for _, table := range d.Tables {
-		if index := table.IndexByName(from); index != nil {
-			if foundIndex != nil {
-				return nil, nil, fmt.Errorf("ambiguous index %q", from)
-			}
-			foundTable, foundIndex = table, index
-		}
-	}
-	if foundIndex == nil {
-		return nil, nil, fmt.Errorf("unknown table or index %q", from)
-	}
-	return foundTable, foundIndex, nil
 }

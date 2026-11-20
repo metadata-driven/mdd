@@ -270,7 +270,7 @@ func (a *metaAttribute) storageTable() *metaTable {
 // Its values contain only fields stored in that source and exclude the ID.
 type schemaItem struct {
 	source string
-	table  string
+	table  *driver.Table
 	id     uint64
 	values driver.DataObject
 	path   string
@@ -333,6 +333,13 @@ func convertSchema(cfg meta.Config) (result *schema, err error) {
 			return nil, e
 		}
 	}
+	for _, database := range c.result.databases {
+		database.TableByName("")
+		for _, table := range database.Tables {
+			table.ColumnByName("")
+			table.IndexByName("")
+		}
+	}
 	return c.result, nil
 }
 
@@ -372,6 +379,7 @@ func (c *converter) allocate(items []meta.Item) error {
 	}
 	return nil
 }
+
 func (c *converter) ensureTable(source meta.Source, name string, owner string) (*driver.Table, error) {
 	if source == nil {
 		return nil, fmt.Errorf("schema: %s has no source", owner)
@@ -392,6 +400,7 @@ func (c *converter) ensureTable(source meta.Source, name string, owner string) (
 	}
 	return t, nil
 }
+
 func column(attr meta.Attribute) (*driver.Column, error) {
 	info := attr.Type()
 	col := &driver.Column{Name: attr.Name(), Options: copyOptions(attr.Options())}
@@ -434,13 +443,7 @@ func column(attr meta.Attribute) (*driver.Column, error) {
 	}
 	return col, nil
 }
-func addColumn(table *driver.Table, col *driver.Column) *driver.Column {
-	if existing := table.ColumnByName(col.Name); existing != nil {
-		return existing
-	}
-	table.Columns = append(table.Columns, col)
-	return col
-}
+
 func (c *converter) convertModel(model meta.Model) error {
 	typ := model.ModelType()
 	if typ != nil {
@@ -517,7 +520,8 @@ func (c *converter) convertModel(model meta.Model) error {
 		if err != nil {
 			return err
 		}
-		tab.Attrs[attr.Name()].column = addColumn(table, col)
+		table.Columns = append(table.Columns, col)
+		tab.Attrs[attr.Name()].column = col
 	}
 	if attr := tab.Attrs["created"]; attr != nil && attr.column != nil && attr.column.Type == driver.TypeDatetime {
 		tab.created = attr
@@ -544,21 +548,13 @@ func (c *converter) convertModel(model meta.Model) error {
 		}
 		var names []string
 		for _, attr := range idx.Attrs() {
-			if attr.Name() == "id" {
-				names = append(names, "id")
-				continue
+			name := attr.Name()
+			if name != "id" && columnByName(table, name) == nil {
+				return fmt.Errorf("schema: index %s requires column %q in table %q in source %q", idx.Path(), name, table.Name, idx.Source().Name())
 			}
-			if kind == meta.IndexTypeUnique && attr.Source() != idx.Source() {
-				return fmt.Errorf("schema: unique index %s requires its attributes in the index source", idx.Path())
-			}
-			col, e := column(attr)
-			if e != nil {
-				return e
-			}
-			addColumn(table, col)
-			names = append(names, col.Name)
+			names = append(names, name)
 		}
-		if table.IndexByName(idx.Name()) != nil {
+		if indexByName(table, idx.Name()) != nil {
 			return fmt.Errorf("schema: duplicate index %s", idx.Path())
 		}
 		table.Indexes = append(table.Indexes, &driver.Index{Name: idx.Name(), Type: indexType, Columns: names, Options: copyOptions(idx.Options())})
@@ -603,7 +599,7 @@ func (c *converter) convertModel(model meta.Model) error {
 			}
 			for source, tables := range c.tables {
 				table := tables[setName]
-				if table != nil && table.ColumnByName(key) != nil {
+				if table != nil && columnByName(table, key) != nil {
 					if rows[source] == nil {
 						rows[source] = driver.DataObject{}
 					}
@@ -613,12 +609,13 @@ func (c *converter) convertModel(model meta.Model) error {
 		}
 		for _, db := range c.result.databases {
 			if values, ok := rows[db.Name]; ok {
-				c.result.items = append(c.result.items, schemaItem{source: db.Name, table: setName, id: c.itemIDs[item.Path()], values: values, path: item.Path()})
+				c.result.items = append(c.result.items, schemaItem{source: db.Name, table: c.tables[db.Name][setName], id: c.itemIDs[item.Path()], values: values, path: item.Path()})
 			}
 		}
 	}
 	return nil
 }
+
 func (c *converter) itemValue(attr meta.Attribute, v any) (any, error) {
 	if v == nil {
 		return nil, nil
@@ -650,6 +647,7 @@ func (c *converter) itemValue(attr meta.Attribute, v any) (any, error) {
 	}
 	return value, nil
 }
+
 func (c *converter) singleValue(info meta.TypeInfo, v any) (any, error) {
 	if v == nil || info.Target == nil {
 		return v, nil
@@ -674,4 +672,22 @@ func (c *converter) singleValue(info meta.TypeInfo, v any) (any, error) {
 		}
 	}
 	return v, nil
+}
+
+func columnByName(table *driver.Table, name string) *driver.Column {
+	for _, col := range table.Columns {
+		if col.Name == name {
+			return col
+		}
+	}
+	return nil
+}
+
+func indexByName(table *driver.Table, name string) *driver.Index {
+	for _, index := range table.Indexes {
+		if index.Name == name {
+			return index
+		}
+	}
+	return nil
 }

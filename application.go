@@ -115,10 +115,10 @@ func (a *Application[C]) initPredefined() error {
 						tx = must(a.getConn(db).OpenTransaction(context.Background()))
 					}
 					values := make(driver.DataObject)
-					for _, col := range db.TableByName(item.table).Columns {
+					for _, col := range item.table.Columns {
 						values[col.Name] = driver.Cast(item.values[col.Name], col.Type, false)
 					}
-					must(tx.Set(item.table, item.id, values))
+					must(tx.Set(item.table.Name, item.id, values))
 				}
 				if tx != nil {
 					check(tx.Commit())

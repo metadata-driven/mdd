@@ -947,6 +947,8 @@ full-text index. For example, an index on `login` is named `login`,
 Without `source`, the index is created in the common effective source of its
 attributes. An explicit different source, such as `search`, describes a derived
 index that the runtime or provider integration must keep synchronized.
+The Go runtime rejects indexes whose target table does not already contain
+every indexed column, except for the driver-managed `id`.
 
 ## Normalization and validation
 

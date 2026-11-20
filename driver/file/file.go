@@ -397,6 +397,10 @@ func (t *transaction) Set(table string, id uint64, values driver.DataObject) (ui
 	if err := t.check(); err != nil {
 		return 0, err
 	}
+	tab := t.conn.schema.TableByName(table)
+	if tab == nil {
+		return 0, fmt.Errorf("file: unknown table %q", table)
+	}
 	plain := driver.DataObject{}
 	pending := map[string]fileChange{}
 	cleanup := func() {
@@ -407,10 +411,10 @@ func (t *transaction) Set(table string, id uint64, values driver.DataObject) (ui
 		}
 	}
 	for name, v := range values {
-		col, e := t.column(table, name)
-		if e != nil {
+		col := tab.ColumnByName(name)
+		if col == nil {
 			cleanup()
-			return 0, e
+			return 0, fmt.Errorf("file: unknown column %s.%s", table, name)
 		}
 		if col.Type != driver.TypeFile {
 			plain[name] = v
@@ -557,6 +561,7 @@ func (t *transaction) Commit() error {
 		}
 		return keys[i].id < keys[j].id
 	})
+	var table *driver.Table
 	for _, key := range keys {
 		dir := t.conn.recordDir(key.table, key.id)
 		if !t.records[key] {
@@ -569,7 +574,10 @@ func (t *transaction) Commit() error {
 		if err != nil {
 			return fail(err)
 		}
-		for _, col := range t.conn.schema.TableByName(key.table).Columns {
+		if table == nil || table.Name != key.table {
+			table = t.conn.schema.TableByName(key.table)
+		}
+		for _, col := range table.Columns {
 			if col.Type == driver.TypeFile {
 				delete(row, col.Name)
 			} else if row[col.Name] == nil {

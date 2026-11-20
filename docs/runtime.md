@@ -80,6 +80,9 @@ value returned by `Fetch` for the last delivered record, not a row count.
 `Extra` is reserved for driver-specific queries; the current drivers reject it.
 Driver `Fetch` returns record IDs.
 
+MDD prepares table, column, and index lookup maps after building the storage
+schema.
+
 `Joins` adds left joins to tables in the same database. Each `QueryJoin` specifies
 the parent `Source`, its local `Column`, the target `Table`, and the resulting
 `Alias`. The source column must have type `TypeID` and is matched against the
