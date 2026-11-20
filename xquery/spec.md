@@ -154,11 +154,9 @@ user.profile.avatar
 parent.icon
 ```
 
-Nested field separator:
-
-```text
-.
-```
+A dot always separates field path components. A field name cannot contain a
+literal dot. This rule also applies to field paths in `where(...)` and
+`order(...)`.
 
 ---
 

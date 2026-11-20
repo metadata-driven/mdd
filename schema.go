@@ -69,10 +69,6 @@ func (s *schema) resolveQueryField(root *metaTable, query *driver.Query, name st
 	}
 	current := root
 	parts := strings.Split(name, ".")
-	// A physical main-table column takes precedence over a reference path.
-	if attr := root.Attrs[name]; attr != nil && attr.column != nil && attr.table != nil && attr.table.Table == root.Table {
-		return "", attr.column.Name, attr
-	}
 	for i, part := range parts {
 		if part == "id" && i == len(parts)-1 {
 			return strings.Join(parts[:i], "."), "id", nil

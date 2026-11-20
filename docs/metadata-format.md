@@ -201,9 +201,10 @@ implicit identifiers, remain in `Model.Attrs()` and may be shown on a default
 tab by an editor. Groups do not affect storage or generated model structure.
 
 A group declaration has `group` instead of `name`; an attribute with a `name`
-may still use `group` as a custom property. Attribute names must be unique
-across the model, including all groups, and group names must be unique within
-the model. Groups support `title`, `icon`, `description`, and `options`.
+may still use `group` as a custom property. Attribute names cannot contain dots
+and must be unique across the model, including all groups. Group names must be
+unique within the model. Groups support `title`, `icon`, `description`, and
+`options`.
 
 ## Project
 

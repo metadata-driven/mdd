@@ -119,7 +119,8 @@ or `Offset("")` to clear them. Queries without `{...}` expressions are cached
 per application schema and source; each set receives its own query values.
 
 Reference fields such as `user.manager.name` in `Set.Query`, `Filter`, `Where`,
-`Order`, and `FindBy` are resolved through model metadata. The schema adds the
+`Order`, and `FindBy` are resolved through model metadata. A dot always separates
+path components; it is never part of a literal field name. The schema adds the
 required joins with aliases `user` and `user.manager`, and uses
 `Source: "user.manager", Column: "name"` for the field. Repeated paths share one
 join. Every reference must be a single model reference stored in the model's primary table, and every
