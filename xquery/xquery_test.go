@@ -3,6 +3,7 @@ package xquery
 import (
 	"encoding/json"
 	"log"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -66,6 +67,44 @@ func TestJSONValues(t *testing.T) {
 
 	want := []any{int64(1), int64(-2), json.Number("1.5"), true, false, nil, "x"}
 	assertEqual(t, q.Where[0].Values, want)
+}
+
+func TestNumericLiteralPrecision(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		literal string
+		want    any
+	}{
+		{"min int64", "-9223372036854775808", int64(math.MinInt64)},
+		{"below min int64", "-9223372036854775809", json.Number("-9223372036854775809")},
+		{"max int64", "9223372036854775807", int64(math.MaxInt64)},
+		{"above max int64", "9223372036854775808", uint64(math.MaxInt64) + 1},
+		{"below max uint64", "18446744073709551614", uint64(math.MaxUint64) - 1},
+		{"max uint64", "18446744073709551615", uint64(math.MaxUint64)},
+		{"above max uint64", "18446744073709551616", json.Number("18446744073709551616")},
+		{"decimal", "0.1234567890123456789", json.Number("0.1234567890123456789")},
+		{"exponent", "1.234567890123456789e+30", json.Number("1.234567890123456789e+30")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			src := "from(items) where(values &= " + tt.literal + ")"
+			q, err := Parse(src)
+			require(t, err == nil, "Parse returned an error: ", err)
+			assertEqual(t, q.Where[0].Values, []any{tt.want})
+			assertEqual(t, q.String(), src)
+
+			roundTrip, err := Parse(q.String())
+			require(t, err == nil, "Round-trip parse returned an error: ", err)
+			assertEqual(t, roundTrip, q)
+		})
+	}
+}
+
+func TestUnsignedOffset(t *testing.T) {
+	const src = `from(users) offset(18446744073709551615)`
+	q, err := Parse(src)
+	require(t, err == nil, "Parse returned an error: ", err)
+	assertEqual(t, q.Offset, uint64(math.MaxUint64))
+	assertEqual(t, q.String(), src)
 }
 
 func TestOffsetString(t *testing.T) {
@@ -162,6 +201,12 @@ func TestErrors(t *testing.T) {
 		{"multiple full-text values", `from(a) where(description ~ "one", "two")`, "exactly one"},
 		{"zero limit", `from(a) limit(0)`, "positive integer"},
 		{"fractional limit", `from(a) limit(1.5)`, "positive integer"},
+		{"limit overflow", `from(a) limit(9223372036854775808)`, "positive integer"},
+		{"offset overflow", `from(a) offset(18446744073709551616)`, "non-negative integer or string"},
+		{"negative offset", `from(a) offset(-1)`, "non-negative integer or string"},
+		{"fractional offset", `from(a) offset(1.5)`, "non-negative integer or string"},
+		{"malformed exponent", `from(a) where(n = 1e+)`, "invalid number"},
+		{"malformed decimal", `from(a) where(n = 1.2.3)`, "invalid number"},
 		{"unknown directive", `from(a) group(id)`, "unknown directive"},
 	}
 	for _, tt := range tests {
