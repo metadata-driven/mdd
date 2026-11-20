@@ -1,17 +1,17 @@
 # Query Language Specification v1
 
-## Общая форма
+## General form
 
-Запрос состоит из директив:
+A query consists of directives:
 
 ```text
 directive(arguments)
 ```
 
-Пример:
+Example:
 
 ```text
-# выборка заказов
+# Select orders
 
 from(billing/orders)
 
@@ -36,47 +36,47 @@ limit(100)
 offset(200)
 ```
 
-Однострочная запись:
+Single-line form:
 
 ```text
 from(billing/orders) select(icon,ts,status,user.name,amount) where(status=done,canceled) where(amount>1) order(user.type asc,ts desc) limit(100) offset(200)
 ```
 
-Порядок директив не имеет значения.
+Directives can appear in any order.
 
 ---
 
-# Комментарии
+# Comments
 
-Поддерживаются:
-
-```text
-# комментарий
-
-// комментарий
-```
-
-Комментарий продолжается до конца строки.
-
-Примеры:
+Both comment styles are supported:
 
 ```text
-from(billing/orders) // источник
+# comment
 
-where(status = done) # только завершённые
+// comment
 ```
 
-Комментарии разрешены внутри многострочных директив:
+A comment extends to the end of the line.
+
+Examples:
+
+```text
+from(billing/orders) // source
+
+where(status = done) # completed orders only
+```
+
+Comments are allowed inside multiline directives:
 
 ```text
 select(
     id,
-    status, // статус
+    status, // order status
     amount,
 )
 ```
 
-Комментарии внутри строк не распознаются:
+Comment markers inside strings are treated as literal text:
 
 ```text
 where(url = "https://example.com/a//b")
@@ -85,7 +85,7 @@ where(tag = "#important")
 
 ---
 
-# Поддерживаемые директивы
+# Supported directives
 
 ```text
 from(...)
@@ -96,27 +96,27 @@ limit(...)
 offset(...)
 ```
 
-Ограничения:
+Occurrence limits:
 
 ```text
-from      не более одной
-select    любое количество
-where     любое количество
-order     любое количество
-limit     не более одной
-offset    не более одной
+from      at most once
+select    any number of times
+where     any number of times
+order     any number of times
+limit     at most once
+offset    at most once
 ```
 
-Все `where(...)` объединяются через `AND`.
+All `where(...)` conditions are combined with `AND`.
 
-Источник обязателен, но может быть задан либо директивой `from(...)`, либо
-аргументом `"from"` при вызове парсера.
+A source is required. Specify it either with a `from(...)` directive or with
+the `"from"` argument when calling the parser.
 
 ---
 
 # from
 
-Источник задаётся путём:
+Specify the source as a path:
 
 ```text
 from(users)
@@ -126,7 +126,7 @@ from(billing/orders)
 from(system/archive/orders)
 ```
 
-Разделитель:
+Path separator:
 
 ```text
 /
@@ -136,7 +136,7 @@ from(system/archive/orders)
 
 # select
 
-Поля перечисляются через запятую:
+Separate field names with commas:
 
 ```text
 select(
@@ -146,7 +146,7 @@ select(
 )
 ```
 
-Вложенные поля:
+Nested fields:
 
 ```text
 user.name
@@ -156,7 +156,7 @@ user.profile.avatar
 parent.icon
 ```
 
-Разделитель вложенности:
+Nested field separator:
 
 ```text
 .
@@ -164,9 +164,9 @@ parent.icon
 
 ---
 
-# Константы
+# Literals
 
-Поддерживаются JSON-константы:
+JSON literals are supported:
 
 ```text
 123
@@ -192,22 +192,22 @@ null
 [true, false]
 ```
 
-Массив является альтернативной записью списка значений условия. Вложенные
-массивы разрешены и рекурсивно приводятся к плоскому списку:
+An array is an alternative way to write a condition's value list. Nested
+arrays are allowed and are recursively flattened into a single list:
 
 ```text
 where(matrix = [[1, 2], [3, [4, 5]]])
 ```
 
-После разбора:
+After parsing:
 
 ```go
 Values: []any{int64(1), int64(2), int64(3), int64(4), int64(5)}
 ```
 
-Каждый элемент итогового `Condition.Values` является примитивом.
+Each element of the resulting `Condition.Values` is a primitive value.
 
-Также поддерживается сокращённая запись строк:
+Unquoted string literals are also supported:
 
 ```text
 done
@@ -221,29 +221,29 @@ moderator
 GB
 ```
 
-Сокращённая запись эквивалентна строковой:
+An unquoted string is equivalent to its quoted form:
 
 ```text
 where(status = done, canceled)
 ```
 
-эквивалентно:
+is equivalent to:
 
 ```text
 where(status = "done", "canceled")
 ```
 
-эквивалентно:
+which is equivalent to:
 
 ```text
 where(status = ["done", "canceled"])
 ```
 
-Парсер всегда преобразует сокращённую запись в строку.
+The parser always treats these unquoted literals as strings.
 
-Позже строки могут быть преобразованы в числовые идентификаторы на основании метаданных поля.
+A string may later be converted to a numeric ID based on field metadata.
 
-Например:
+For example:
 
 ```text
 "done"     → 111
@@ -255,13 +255,13 @@ where(status = ["done", "canceled"])
 
 # where
 
-Общий вид:
+General form:
 
 ```text
 where(field operator values)
 ```
 
-Примеры:
+Examples:
 
 ```text
 where(status = done)
@@ -279,9 +279,9 @@ where(parent != null)
 
 ---
 
-# Операторы
+# Operators
 
-Поддерживаются:
+Supported operators:
 
 ```text
 =
@@ -298,12 +298,16 @@ where(parent != null)
 
 ~
 
+&=
+
+|=
+
 in
 
 not in
 ```
 
-Семантика:
+Semantics:
 
 ```text
 in      == =
@@ -311,7 +315,7 @@ in      == =
 not in  == !=
 ```
 
-После разбора:
+After parsing:
 
 ```text
 in      → =
@@ -321,16 +325,39 @@ not in  → !=
 
 ---
 
-# Полнотекстовый поиск
+# Collection membership
 
-Для полнотекстового поиска используется оператор `~`:
+`&=` checks whether a collection contains all listed values. `|=` checks
+whether it contains at least one of them:
+
+```text
+where(permissions &= manage_users, manage_orders)
+where(permissions |= manage_users, manage_orders)
+where(permissions |= [manage_users, manage_orders])
+```
+
+Both operators require at least one value and are stored unchanged in
+`Condition.Op`. With a single value, both check whether that value is in the
+collection. An empty collection never matches, and duplicate candidates do not
+affect the result. The operators compare whole elements, not substrings.
+
+Both operators are valid **only on collection fields**. The parser rejects an
+empty value list, and field type validation rejects a scalar field. To match a
+scalar field against any value in a list, use `=`:
+`where(type = admin, moderator)`.
+
+---
+
+# Full-text search
+
+Use the `~` operator for full-text search:
 
 ```text
 where(description ~ "canceled by client request")
 ```
 
-Оператор принимает ровно одно значение. После разбора он сохраняется в
-`Condition.Op` без преобразования:
+The operator takes exactly one value. The parser stores it unchanged in
+`Condition.Op`:
 
 ```go
 Condition{
@@ -340,7 +367,7 @@ Condition{
 }
 ```
 
-Несколько значений или массив недопустимы:
+Multiple values and arrays are not allowed:
 
 ```text
 where(description ~ "one", "two")
@@ -349,27 +376,27 @@ where(description ~ ["one", "two"])
 
 ---
 
-# Равенство множеству
+# Equality against a list
 
-Одиночное значение:
+Single value:
 
 ```text
 where(id = 1)
 ```
 
-Множество:
+List of values:
 
 ```text
 where(id = 1, 2, 3)
 ```
 
-Эквивалентная запись:
+Equivalent form:
 
 ```text
 where(id = [1, 2, 3])
 ```
 
-Семантика:
+Semantics:
 
 ```text
 id ∈ {1,2,3}
@@ -377,7 +404,7 @@ id ∈ {1,2,3}
 
 ---
 
-# Неравенство множеству
+# Inequality against a list
 
 ```text
 where(id != 1)
@@ -391,7 +418,7 @@ where(id != 1, 2, 3)
 where(id != [1, 2, 3])
 ```
 
-Семантика:
+Semantics:
 
 ```text
 id ∉ {1,2,3}
@@ -399,18 +426,17 @@ id ∉ {1,2,3}
 
 ---
 
-# Пустое множество
+# Empty value lists
 
 ```text
 where(id = [])
 ```
 
-всегда ложно.
+This condition is always false. The parser stores it in `Query.Where` with an
+empty `Values` list.
 
-Условие сохраняется в `Query.Where` с пустым `Values`.
-
-Метод `Query.IsEmpty()` возвращает `true`, если находит условие с
-оператором `=` и пустым списком значений.
+`Query.IsEmpty()` returns `true` if it finds a condition with the `=` operator
+and an empty value list.
 
 ---
 
@@ -418,22 +444,20 @@ where(id = [])
 where(id != [])
 ```
 
-всегда истинно.
-
-Условие также сохраняется в `Query.Where`. Сам парсер не оптимизирует и не
-удаляет условия.
+This condition is always true. The parser also stores it in `Query.Where`; it
+does not optimize or remove conditions.
 
 ---
 
 # Null
 
-Проверка на отсутствие значения:
+Test whether a value is absent:
 
 ```text
 where(parent = null)
 ```
 
-Проверка на наличие:
+Test whether a value is present:
 
 ```text
 where(parent != null)
@@ -441,9 +465,9 @@ where(parent != null)
 
 ---
 
-# Операторы порядка
+# Comparison operators
 
-Поддерживаются:
+Supported operators:
 
 ```text
 >
@@ -455,9 +479,9 @@ where(parent != null)
 <=
 ```
 
-Допускается только одно значение:
+These operators take exactly one value.
 
-Корректно:
+Valid:
 
 ```text
 where(amount > 10)
@@ -465,7 +489,7 @@ where(amount > 10)
 where(ts >= 1000)
 ```
 
-Некорректно:
+Invalid:
 
 ```text
 where(amount > 1, 2)
@@ -477,7 +501,7 @@ where(amount > [1, 2])
 
 # order
 
-Пример:
+Example:
 
 ```text
 order(
@@ -486,7 +510,7 @@ order(
 )
 ```
 
-Направления:
+Sort directions:
 
 ```text
 asc
@@ -494,13 +518,13 @@ asc
 desc
 ```
 
-Если направление не указано:
+If you omit the sort direction:
 
 ```text
 order(user.name)
 ```
 
-эквивалентно:
+is equivalent to:
 
 ```text
 order(user.name asc)
@@ -514,7 +538,7 @@ order(user.name asc)
 limit(100)
 ```
 
-Допускаются только положительные целые числа:
+Only positive integers are allowed:
 
 ```text
 limit(100)
@@ -522,8 +546,8 @@ limit(100)
 limit(1000)
 ```
 
-Значение `0` зарезервировано в `Query.Limit` для обозначения отсутствующей
-директивы, поэтому `limit(0)` считается ошибкой.
+`Query.Limit` uses `0` to indicate that the directive is absent, so `limit(0)`
+is an error.
 
 ---
 
@@ -533,7 +557,7 @@ limit(1000)
 offset(200)
 ```
 
-Допускаются неотрицательные целые числа до `MaxUint64` и строки:
+Offsets can be strings or non-negative integers up to `MaxUint64`:
 
 ```text
 offset(0)
@@ -543,14 +567,14 @@ offset(200)
 offset("next-page")
 ```
 
-Числовой `Query.Offset` имеет тип `int64` в его диапазоне и `uint64` для
-больших значений. Допустимый диапазон при выполнении запроса зависит от драйвера.
+A numeric `Query.Offset` is stored as an `int64` if it fits, or as a `uint64`
+otherwise. The supported range at query execution time depends on the driver.
 
 ---
 
 # Trailing comma
 
-Разрешается:
+Trailing commas are allowed:
 
 ```text
 select(
@@ -578,9 +602,9 @@ order(
 
 # Go API
 
-Парсер только разбирает и проверяет запрос. Построение SQL в него не входит.
+The parser parses and validates the query. It does not generate SQL.
 
-Основная функция:
+Entry point:
 
 ```go
 type Args map[string]string
@@ -588,17 +612,17 @@ type Args map[string]string
 func Parse(src string, args ...Args) (*Query, error)
 ```
 
-`from(...)` можно не указывать в тексте запроса, если источник передан в
-аргументах парсера:
+You can omit `from(...)` from the query text if you pass the source as a parser
+argument:
 
 ```go
 query, err := Parse(`select(id, user.name)`, Args{"from": "billing/orders"})
 ```
 
-Явная директива `from(...)` имеет приоритет над аргументом `"from"`. Если
-источник не указан ни в запросе, ни в аргументах, парсер возвращает ошибку.
+An explicit `from(...)` directive takes precedence over the `"from"` argument.
+If neither specifies a source, the parser returns an error.
 
-Структура результата:
+Result types:
 
 ```go
 type Query struct {
@@ -624,25 +648,25 @@ type Order struct {
 }
 ```
 
-`From` хранится одной строкой с разделителем `/`:
+`From` is stored as a single string with `/`-separated components:
 
 ```go
 query.From // "billing/orders"
 ```
 
-Для получения отдельных частей используется:
+To get the individual components, use:
 
 ```go
 func (q *Query) FromParts() []string
 ```
 
-Пример результата:
+Example result:
 
 ```go
 []string{"billing", "orders"}
 ```
 
-Поле также хранится одной строкой с разделителем `.`:
+A field path is also stored as a single string, with `.`-separated components:
 
 ```go
 field := Field("user.profile.avatar")
@@ -650,92 +674,91 @@ field.String() // "user.profile.avatar"
 field.Parts()  // []string{"user", "profile", "avatar"}
 ```
 
-Доступные методы `Field`:
+`Field` methods:
 
 ```go
 func (f Field) String() string
 func (f Field) Parts() []string
 ```
 
-`Condition.Values` имеет тип `[]any`. Типы его элементов после разбора:
+`Condition.Values` has type `[]any`. After parsing, its elements have these types:
 
 ```text
-целое в диапазоне int64              int64
-целое выше MaxInt64 до MaxUint64     uint64
-прочие числа, включая дроби          json.Number
-строка                               string
-true/false                           bool
-null                                 nil
+integer in the int64 range              int64
+integer above MaxInt64 up to MaxUint64  uint64
+other numbers, including fractions      json.Number
+string                                  string
+true/false                              bool
+null                                    nil
 ```
 
-Числа сохраняются без округления. Значения `json.Number` хранят исходную
-запись числа. Тип поля определяет дальнейшее приведение значения.
+Numbers are preserved without rounding. `json.Number` retains the original
+numeric literal. The field type determines how the value is converted later.
 
-Вложенные массивы из текста запроса рекурсивно разворачиваются. Вложенные
-`[]any` в итоговом `Condition.Values` не сохраняются.
+Nested arrays in query text are recursively flattened. The resulting
+`Condition.Values` does not contain any nested `[]any` values.
 
-Сокращённые строковые значения, например `done`, сохраняются как `string`.
+Unquoted string literals such as `done` are stored as `string` values.
 
 ---
 
-# Проверка пустого результата
+# Checking for an empty result
 
-В `Query` нет отдельного поля состояния пустого результата.
-
-Для проверки используется вычисляемый метод:
+`Query` has no field that tracks whether the result is empty. Use this method
+instead:
 
 ```go
 func (q *Query) IsEmpty() bool
 ```
 
-Он просматривает `Where` и возвращает `true` при наличии условия вида:
+It scans `Where` and returns `true` if it finds a condition of this form:
 
 ```text
 where(field = [])
 ```
 
-Для `nil`-указателя на `Query` метод возвращает `false`.
+The method returns `false` for a `nil` `*Query`.
 
 ---
 
-# Преобразование обратно в xquery
+# Formatting as xquery
 
-Метод `String()` возвращает каноническую однострочную запись:
+`String()` returns the canonical single-line form:
 
 ```go
 func (q *Query) String() string
 ```
 
-Пример:
+Example:
 
 ```text
 from(billing/orders) select(id, user.name) where(status = "done") order(ts desc) limit(10) offset("next-page")
 ```
 
-Правила канонической записи:
+Canonical formatting rules:
 
-- директивы выводятся в порядке `from`, `select`, `where`, `order`, `limit`, `offset`;
-- все строковые значения выводятся как JSON-строки;
-- направление `asc` не выводится, потому что оно используется по умолчанию;
-- пустой список значений выводится как `[]`;
-- для `nil`-указателя на `Query` возвращается пустая строка.
+- Directives appear in this order: `from`, `select`, `where`, `order`, `limit`, `offset`.
+- All string values are formatted as JSON strings.
+- The default sort direction, `asc`, is omitted.
+- An empty value list is formatted as `[]`.
+- A `nil` `*Query` formats as an empty string.
 
-Поддерживается преобразование с сохранением структуры:
+Round-tripping preserves the query structure:
 
 ```text
 Parse → Query.String → Parse
 ```
 
-Комментарии и исходное форматирование при этом не сохраняются.
+Comments and original formatting are not preserved.
 
 ---
 
 # JSON
 
-`Query`, `Condition` и `Order` поддерживают стандартное преобразование через
-`encoding/json`.
+`Query`, `Condition`, and `Order` support standard JSON encoding and decoding
+through `encoding/json`.
 
-Пример:
+Example:
 
 ```json
 {
@@ -759,14 +782,14 @@ Parse → Query.String → Parse
 }
 ```
 
-Поле `from` выводится всегда. Пустые `select`, `where`, `order`, `limit` и
-`offset` не попадают в JSON благодаря `omitempty`.
+The output always includes `from`. The `omitempty` tag omits `select`, `where`,
+`order`, `limit`, and `offset` when they are empty.
 
 ---
 
-# Пробелы
+# Whitespace
 
-Эквивалентны:
+These forms are equivalent:
 
 ```text
 where(amount>1)
@@ -776,7 +799,7 @@ where(amount>1)
 where(amount > 1)
 ```
 
-Эквивалентны:
+These forms are also equivalent:
 
 ```text
 where(status=done,canceled)
@@ -788,11 +811,11 @@ where(status = done, canceled)
 
 ---
 
-# Нормализация
+# Normalization
 
-Парсер выполняет следующие преобразования.
+The parser applies the following transformations.
 
-Сокращённая строка:
+Unquoted string literals:
 
 ```text
 where(status = done, canceled)
@@ -838,7 +861,7 @@ where(status != done, canceled)
 
 ---
 
-Массив:
+Array:
 
 ```text
 where(id = [1, 2, 3])
@@ -852,7 +875,7 @@ Values: []any{int64(1), int64(2), int64(3)}
 
 ---
 
-Пустое множество:
+Empty value list:
 
 ```text
 where(id = [])
@@ -866,7 +889,7 @@ Values: nil
 
 ---
 
-# Грамматика
+# Grammar
 
 ```text
 query =
@@ -893,6 +916,8 @@ operator =
     | "<"
     | "<="
     | "~"
+    | "&="
+    | "|="
     | "in"
     | "not in"
 

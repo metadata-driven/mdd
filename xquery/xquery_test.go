@@ -256,13 +256,25 @@ func toJSON(v any) string {
 	return string(data)
 }
 
-func TestCollectionOperator(t *testing.T) {
-	q, err := Parse("from(users) where(permissions &= manage_users, manage_orders)")
-	require(t, err == nil, err)
-	assertEqual(t, q.Where[0].Op, "&=")
-	assertEqual(t, q.Where[0].Values, []any{"manage_users", "manage_orders"})
-	for _, src := range []string{"where(tags &= [])", "where(tags & read)"} {
-		_, err := Parse(src)
+func TestCollectionOperators(t *testing.T) {
+	args := Args{"from": "users"}
+	for _, tc := range []struct {
+		src string
+		op  string
+	}{
+		{"where(permissions &= manage_users, manage_orders)", "&="},
+		{"where(permissions|=manage_users,manage_orders)", "|="},
+		{"where(permissions |= [manage_users, manage_orders])", "|="},
+	} {
+		q, err := Parse(tc.src, args)
+		require(t, err == nil, err)
+		assertEqual(t, q.Where[0], Condition{Field: "permissions", Op: tc.op, Values: []any{"manage_users", "manage_orders"}})
+		roundTrip, err := Parse(q.String())
+		require(t, err == nil, err)
+		assertEqual(t, roundTrip, q)
+	}
+	for _, src := range []string{"where(tags &= [])", "where(tags & read)", "where(tags |= [])", "where(tags |=)", "where(tags | read)", "where(tags = read | write)"} {
+		_, err := Parse(src, args)
 		require(t, err != nil, "expected error for ", src)
 	}
 }

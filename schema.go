@@ -114,12 +114,12 @@ func (s *schema) resolveQueryField(root *metaTable, query *driver.Query, name st
 
 func (s *schema) queryFilter(root *metaTable, query *driver.Query, name, op string, values []any) driver.QueryFilter {
 	source, column, attr := s.resolveQueryField(root, query, name)
-	if op == driver.OpContainsAll {
+	if op == driver.OpContainsAll || op == driver.OpContainsAny {
 		if attr == nil || !attr.Type().Collection {
-			panic(fmt.Errorf("mdd: operator &= requires a collection: %s.%s", root.Name, name))
+			panic(fmt.Errorf("mdd: operator %s requires a collection: %s.%s", op, root.Name, name))
 		}
 		if len(values) == 0 {
-			panic("mdd: operator &= requires at least one value")
+			panic(fmt.Errorf("mdd: operator %s requires at least one value", op))
 		}
 		return driver.QueryFilter{Source: source, Column: column, Op: op, Values: castCollectionQueryValues(attr, values)}
 	}

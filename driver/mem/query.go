@@ -38,7 +38,7 @@ func collectionNumber(v any) bool {
 	}
 }
 
-func collectionContainsAll(value any, targets []any) (bool, error) {
+func collectionMatches(value any, targets []any, requireAll bool) (bool, error) {
 	if value == nil {
 		return false, nil
 	}
@@ -81,11 +81,11 @@ func collectionContainsAll(value any, targets []any) (bool, error) {
 				break
 			}
 		}
-		if !found {
-			return false, nil
+		if found != requireAll {
+			return found, nil
 		}
 	}
-	return true, nil
+	return requireAll, nil
 }
 
 func compare(a, b any, typ driver.DataType) (int, error) {
@@ -291,22 +291,27 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		if e != nil {
 			return "", e
 		}
-		if op == driver.OpContainsAll {
+		if op == driver.OpContainsAll || op == driver.OpContainsAny {
 			if typ != driver.TypeJSON {
-				return "", fmt.Errorf("mem: &= requires a JSON collection")
+				return "", fmt.Errorf("mem: %s requires a JSON collection", op)
 			}
-		} else if typ == driver.TypeJSON {
+			if len(f.Values) == 0 {
+				return "", fmt.Errorf("mem: operator %s requires at least one value", op)
+			}
+			continue
+		}
+		if typ == driver.TypeJSON {
 			return "", errorsUnsupportedType(typ)
 		}
 		switch op {
-		case "", driver.OpEqual, driver.OpNotEqual, driver.OpGT, driver.OpGTE, driver.OpLT, driver.OpLTE, driver.OpMatch, driver.OpContainsAll:
+		case driver.OpEqual, driver.OpNotEqual, driver.OpGT, driver.OpGTE, driver.OpLT, driver.OpLTE, driver.OpMatch:
 		default:
 			return "", fmt.Errorf("mem: unsupported operator %q", f.Op)
 		}
-		if len(f.Values) == 0 && op != driver.OpEqual && op != driver.OpNotEqual && op != driver.OpContainsAll {
+		if len(f.Values) == 0 && op != driver.OpEqual && op != driver.OpNotEqual {
 			return "", fmt.Errorf("mem: empty filter values")
 		}
-		if len(f.Values) > 1 && op != driver.OpEqual && op != driver.OpNotEqual && op != driver.OpContainsAll {
+		if len(f.Values) > 1 && op != driver.OpEqual && op != driver.OpNotEqual {
 			return "", fmt.Errorf("mem: multiple values require equality or inequality")
 		}
 	}
@@ -375,12 +380,12 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 			if op == "" {
 				op = driver.OpEqual
 			}
-			if op == driver.OpContainsAll {
+			if op == driver.OpContainsAll || op == driver.OpContainsAny {
 				v, err := value(id, f.Source, f.Column)
 				if err != nil {
 					return "", err
 				}
-				ok, err := collectionContainsAll(v, f.Values)
+				ok, err := collectionMatches(v, f.Values, op == driver.OpContainsAll)
 				if err != nil {
 					return "", err
 				}

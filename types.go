@@ -34,6 +34,8 @@ const (
 	OpMatch = driver.OpMatch
 	// OpContainsAll matches collections containing all supplied values.
 	OpContainsAll = driver.OpContainsAll
+	// OpContainsAny matches collections containing at least one supplied value.
+	OpContainsAny = driver.OpContainsAny
 )
 
 // NewFile accepts a string, byte slice, io.Reader, or reader factory.

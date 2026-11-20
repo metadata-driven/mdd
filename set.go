@@ -180,6 +180,11 @@ func (s *Set[T]) WhereContainsAll(name string, values ...any) *Set[T] {
 	return s.Where(name, OpContainsAll, values...)
 }
 
+// WhereContainsAny matches collections containing at least one supplied value.
+func (s *Set[T]) WhereContainsAny(name string, values ...any) *Set[T] {
+	return s.Where(name, OpContainsAny, values...)
+}
+
 // Order sets the sort columns. A leading minus sign selects descending order.
 func (s *Set[T]) Order(names ...string) *Set[T] {
 	if s == nil {

@@ -125,16 +125,25 @@ func TestCollectionQueries(t *testing.T) {
 		assertIDs(t, ctx.Users().Where("permissions", "&=", UserPermissionManageUsers, UserPermissionManageOrders).IDs(), []uint64{UserSuperAdmin.ID(), alice.ID()})
 		assertIDs(t, ctx.Users().Where("friends", "&=", manager).IDs(), []uint64{alice.ID()})
 		assertIDs(t, ctx.Orders().Query("where(user.tags &= read, write)").IDs(), alice.Orders().IDs())
+		assertIDs(t, ctx.Users().Query("where(permissions |= manage_orders, manage_users)").IDs(), []uint64{UserSuperAdmin.ID(), alice.ID(), bob.ID()})
+		assertIDs(t, ctx.Users().WhereContainsAny("friends", bob, manager).IDs(), []uint64{alice.ID()})
+		assertIDs(t, ctx.Orders().Query("where(user.tags |= bread, write) where(user.login = bob)").IDs(), bob.Orders().IDs())
+		assertIDs(t, ctx.Users().Query("where(login = alice, bob)").IDs(), []uint64{alice.ID(), bob.ID()})
 		assertIDs(t, mdd.AttrSet[User](alice, "authorized_users").IDs(), []uint64{alice.ID(), UserSuperAdmin.ID()})
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for _, query := range []string{"where(tags &= [])", "where(login &= alice)"} {
-		err := app.Execute(nil, func(ctx *Context) { ctx.Users().Query(query).Count() })
-		if err == nil {
-			t.Errorf("expected error for %s", query)
+	for _, tc := range []struct{ query, want string }{
+		{"where(tags &= [])", "operator &= requires at least one value"},
+		{"where(tags |= [])", "operator |= requires at least one value"},
+		{"where(login &= alice)", "operator &= requires a collection"},
+		{"where(login |= alice)", "operator |= requires a collection"},
+	} {
+		err := app.Execute(nil, func(ctx *Context) { ctx.Users().Query(tc.query).Count() })
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("query %q: got error %v, want %q", tc.query, err, tc.want)
 		}
 	}
 }

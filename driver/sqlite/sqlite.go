@@ -726,12 +726,22 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		if e != nil {
 			return "", fmt.Errorf("sqlite: %w", e)
 		}
-		if f.Op == driver.OpContainsAll {
+		if f.Op == driver.OpContainsAll || f.Op == driver.OpContainsAny {
 			if col.Type != driver.TypeJSON {
-				return "", errors.New("sqlite: &= requires a JSON collection")
+				return "", fmt.Errorf("sqlite: %s requires a JSON collection", f.Op)
 			}
-			candidates, _ := json.Marshal(f.Values)
-			where = append(where, "mdd_json_contains_all("+col.SQL(quote)+", ?) = 1")
+			if len(f.Values) == 0 {
+				return "", fmt.Errorf("sqlite: operator %s requires at least one value", f.Op)
+			}
+			candidates, err := json.Marshal(f.Values)
+			if err != nil {
+				return "", fmt.Errorf("sqlite: invalid JSON candidates: %w", err)
+			}
+			match := "mdd_json_contains_all"
+			if f.Op == driver.OpContainsAny {
+				match = "mdd_json_contains_any"
+			}
+			where = append(where, match+"("+col.SQL(quote)+", ?) = 1")
 			args = append(args, string(candidates))
 			continue
 		}

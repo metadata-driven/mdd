@@ -132,27 +132,31 @@ orders := ctx.Orders().Query("where(status=placed) order(ts desc)")
 orders = mdd.NewQuery[Order](ctx, "where(status=placed) order(ts desc)")
 ```
 
-Collection fields support `&=` to require every listed element:
+`&=` requires every listed element; `|=` requires at least one. Both operators
+are only valid on collection fields. Use `=` for scalar fields:
 
 ```go
 users := ctx.Users().Query("where(permissions &= manage_users, manage_orders)")
 users = ctx.Users().WhereContainsAll("permissions", UserPermissionManageUsers, UserPermissionManageOrders)
-users = ctx.Users().Where("friends", mdd.OpContainsAll, manager)
+users = ctx.Users().Query("where(permissions |= manage_users, manage_orders)")
+users = ctx.Users().WhereContainsAny("permissions", UserPermissionManageUsers, UserPermissionManageOrders)
 ```
 
-The operator checks JSON array elements, not substrings. Empty collections do
+Both operators check JSON array elements, not substrings. Empty collections do
 not match; an empty candidate list or a scalar field is an error. Model and enum
 values are converted to IDs, while other values use the collection element type.
-It also works through joined references, such as `where(user.tags &= featured)`.
+Both work through joined references, such as `where(user.tags |= featured, pinned)`.
 `Where` also accepts the operator constants exposed by `mdd`, such as
-`mdd.OpEqual`, `mdd.OpGT`, and `mdd.OpContainsAll`; string operators remain valid.
-At the driver boundary, `driver.OpContainsAll` accepts nonempty scalar values
-for a JSON collection column: IDs and references are `uint64`, integers are
-`int64`, decimals are `json.Number`, and strings, timestamps and base64-encoded
-binary values are `string` (a nil binary value remains nil). MySQL uses
-`JSON_CONTAINS`; SQLite uses a
-registered JSON comparison function that preserves integer precision. The mem,
-file, JSON and YAML drivers compare decoded values in memory. No collection
+`mdd.OpContainsAll` and `mdd.OpContainsAny`; string operators remain valid.
+At the driver boundary, `driver.OpContainsAll` and `driver.OpContainsAny` accept
+a nonempty list of scalar candidates for a JSON array column: IDs and
+references are `uint64`, integers are `int64`, decimals are `json.Number`, and
+strings, timestamps and base64-encoded binary values are `string` (a nil
+binary value remains nil). MySQL uses
+`JSON_CONTAINS` with the entire list for `&=` and one check per candidate
+combined with OR for `|=`. SQLite uses registered JSON comparison functions
+that preserve integer precision. The mem, file, JSON and YAML drivers compare
+decoded values in memory. No collection
 index is implied. Callers constructing driver queries directly should supply
 normalized values; drivers determine their supported operators and values.
 

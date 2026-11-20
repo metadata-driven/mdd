@@ -13,26 +13,29 @@ import (
 )
 
 func init() {
-	sqlite.MustRegisterDeterministicScalarFunction("mdd_json_contains_all", 2, mdd_json_contains_all)
+	sqlite.MustRegisterDeterministicScalarFunction("mdd_json_contains_all", 2, jsonCollectionMatch(true))
+	sqlite.MustRegisterDeterministicScalarFunction("mdd_json_contains_any", 2, jsonCollectionMatch(false))
 }
 
-func mdd_json_contains_all(_ *sqlite.FunctionContext, values []sqldriver.Value) (sqldriver.Value, error) {
-	document, ok := values[0].(string)
-	if !ok && values[0] != nil {
-		return nil, errors.New("invalid JSON collection")
+func jsonCollectionMatch(requireAll bool) func(*sqlite.FunctionContext, []sqldriver.Value) (sqldriver.Value, error) {
+	return func(_ *sqlite.FunctionContext, values []sqldriver.Value) (sqldriver.Value, error) {
+		document, ok := values[0].(string)
+		if !ok && values[0] != nil {
+			return nil, errors.New("invalid JSON collection")
+		}
+		candidates, ok := values[1].(string)
+		if !ok {
+			return nil, errors.New("invalid JSON candidates")
+		}
+		matched, err := collectionMatches(document, candidates, requireAll)
+		if err != nil {
+			return nil, err
+		}
+		if matched {
+			return int64(1), nil
+		}
+		return int64(0), nil
 	}
-	candidates, ok := values[1].(string)
-	if !ok {
-		return nil, errors.New("invalid JSON candidates")
-	}
-	matched, err := containsAll(document, candidates)
-	if err != nil {
-		return nil, err
-	}
-	if matched {
-		return int64(1), nil
-	}
-	return int64(0), nil
 }
 
 func decodeJSON(data string) (any, error) {
@@ -55,8 +58,8 @@ func decodeJSON(data string) (any, error) {
 	return value, nil
 }
 
-// containsAll compares JSON array elements without losing numeric precision.
-func containsAll(document, candidates string) (bool, error) {
+// collectionMatches compares JSON array elements without losing numeric precision.
+func collectionMatches(document, candidates string, requireAll bool) (bool, error) {
 	decode := func(text string) ([]any, error) {
 		if text == "" {
 			return nil, nil
@@ -100,9 +103,9 @@ func containsAll(document, candidates string) (bool, error) {
 				break
 			}
 		}
-		if !found {
-			return false, nil
+		if found != requireAll {
+			return found, nil
 		}
 	}
-	return true, nil
+	return requireAll, nil
 }

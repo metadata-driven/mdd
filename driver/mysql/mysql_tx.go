@@ -382,13 +382,31 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 		if op == "" {
 			op = driver.OpEqual
 		}
-		if op == driver.OpContainsAll {
+		if op == driver.OpContainsAll || op == driver.OpContainsAny {
 			if col.Type != driver.TypeJSON {
-				return "", fmt.Errorf("mysql: &= requires a JSON collection")
+				return "", fmt.Errorf("mysql: %s requires a JSON collection", op)
 			}
-			candidates, _ := json.Marshal(f.Values)
-			where = append(where, "JSON_CONTAINS(COALESCE(NULLIF("+col.SQL(escName)+", ''), '[]'), ?)")
-			args = append(args, string(candidates))
+			if len(f.Values) == 0 {
+				return "", fmt.Errorf("mysql: operator %s requires at least one value", op)
+			}
+			groups := [][]any{f.Values}
+			if op == driver.OpContainsAny {
+				groups = make([][]any, 0, len(f.Values))
+				for i := range f.Values {
+					groups = append(groups, f.Values[i:i+1])
+				}
+			}
+			check := "JSON_CONTAINS(COALESCE(NULLIF(" + col.SQL(escName) + ", ''), '[]'), ?)"
+			clauses := make([]string, 0, len(groups))
+			for _, group := range groups {
+				candidates, err := json.Marshal(group)
+				if err != nil {
+					return "", fmt.Errorf("mysql: invalid JSON candidates: %w", err)
+				}
+				clauses = append(clauses, check)
+				args = append(args, string(candidates))
+			}
+			where = append(where, "("+strings.Join(clauses, " OR ")+")")
 			continue
 		}
 		switch op {
