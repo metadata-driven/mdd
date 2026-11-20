@@ -259,6 +259,44 @@ err := app.Execute(nil, func(ctx *Context) {
 An optional `context.Context` can be passed as the first argument to control
 cancellation. The context is committed on success and rolled back on panic.
 
+Use `app.HandleHTTP(w, r)` to run your context's `HandleHTTP()` method in a
+transaction. It returns an error before initialization if the context type
+lacks this method. It sets `ctx.Request` to `r`, sets `ctx.Writer` to `w` when
+provided, and uses `r.Context()` for cancellation.
+
+```go
+func (ctx *Context) HandleHTTP() {
+    name := ctx.FormValue("name")
+    if err := ctx.WriteText("Hello, " + name); err != nil {
+        ctx.Logf("write response: %v", err)
+    }
+}
+```
+
+`ctx.FormValue("name")` reads a form field or URL query parameter. The first
+call parses the form, including multipart data, and later calls reuse it. A
+parsing error causes a panic, so `app.HandleHTTP` rolls back the transaction and
+returns the error. A missing field returns an empty string.
+For multipart uploads, use `ctx.Request.FormFile("file")`. To decode a JSON
+request, read `ctx.Request.Body`.
+
+You can also set `ctx.Request` and `ctx.Writer` directly in an `Execute`
+callback. Pass `r.Context()` to `Execute` to use the request's cancellation.
+
+`ctx.RW()` returns the underlying `http.ResponseWriter`, or nil for other
+writers. The context itself implements `http.ResponseWriter`. Its `Header`,
+`WriteHeader`, and `Write` methods forward to the HTTP writer. `WriteText(text)` and
+`WriteJSON(value)` set the content type and write the body. They return write
+errors, and `WriteJSON` returns encoding errors before setting headers or
+writing the body. The handler can decide whether to roll back the transaction by
+panicking with the error.
+
+`app.HandleHTTP` also accepts a plain `io.Writer`. In that case `Header()` holds
+local headers and `WriteHeader()` has no effect. A nil writer uses `os.Stdout`,
+including in `Execute`. A nil request uses `context.Background()` in
+`app.HandleHTTP`. Output is written immediately, so a later rollback cannot undo
+bytes already sent.
+
 Call `ctx.SetTimeout(15 * time.Second)` before the first database transaction to
 set a timeout for one `Execute` call, including a single `Cron` run. Calling it
 again before a transaction opens replaces the timeout; the parent context's
@@ -270,9 +308,9 @@ Applications use Go's standard logger by default. Configure the logger before
 creating contexts, or override it for an individual context:
 
 ```go
-app.SetLogger(logger, "app: ")
+app.SetLogger(logger, "app")
 err := app.Execute(nil, func(ctx *Context) {
-    ctx.SetLogPrefix("request: ")
+    ctx.SetLogPrefix("request")
     ctx.Log("processing request")
     ctx.Logf("user ID: %d", userID)
 })
@@ -280,11 +318,14 @@ err := app.Execute(nil, func(ctx *Context) {
 
 `Logger()` exposes the configured `*log.Logger`. A nil logger passed to the
 application selects the standard logger; a nil context logger selects the
-application logger. Prefixes are added without modifying the supplied logger.
-Each `Execute` context inherits the application logger. `ctx.SetLogPrefix`
-sets or replaces the context prefix, and `ctx.SetLogger` can replace its logger.
-An empty prefix removes the context prefix. Errors returned
-by `Open`, `Close`, and `Execute` are also written to the appropriate logger.
+application logger. MDD wraps each nonempty prefix in square brackets and adds
+a space after it. The example prints `[app] [request] processing request` after
+any timestamp or other fields emitted by the supplied logger.
+Each context inherits the application logger. `app.HandleHTTP` adds the `[http]`
+prefix, and `app.Cron` adds `[cron]`. Both set the prefix before `OnInit()`.
+`ctx.SetLogPrefix` sets or replaces the context prefix, and `ctx.SetLogger` can
+replace its logger. An empty prefix removes the context prefix. Errors from
+`Open`, `Close`, and transaction execution are written to the appropriate logger.
 
 `ctx.App()` returns the original `*App`. The underlying transaction and
 application links are internal to `mdd`.
@@ -297,7 +338,6 @@ done := make(chan struct{})
 go func() {
     defer close(done)
     app.Cron(cronCtx, time.Minute, func(ctx *Context) {
-        ctx.SetLogPrefix("cron: ")
         ctx.ProcessOrders()
     })
 }()
@@ -309,8 +349,8 @@ stopCron()
 
 `Cron` blocks until its context is canceled. The first run waits for the next
 boundary, measured from the Unix epoch. Runs do not overlap; boundaries missed
-while a callback is running are skipped. A failed transaction is logged by
-`Execute`, and the cron continues. A nonpositive period causes a panic. Canceling
+while a callback is running are skipped. A failed transaction is logged and the
+cron continues. A nonpositive period causes a panic. Canceling
 the context prevents further runs; an active callback must handle cancellation
 itself. Stop and wait for cron goroutines before closing the application.
 While waiting for a boundary, cancellation is checked at least every 15 seconds.

@@ -3,9 +3,14 @@ package mdd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"mime"
+	"net/http"
+	"os"
 	"reflect"
 	"slices"
 	"time"
@@ -17,6 +22,15 @@ import (
 
 type Context struct {
 	context.Context
+
+	// Request is the HTTP request associated with the context, if any.
+	Request *http.Request
+	// Writer receives the response body. Context writes use os.Stdout if it is nil.
+	Writer io.Writer
+
+	httpHeader        http.Header
+	parsedFormRequest *http.Request
+
 	self          any
 	app           appProvider
 	schema        *schema
@@ -75,7 +89,7 @@ func (ctx *Context) Logger() *log.Logger {
 }
 
 // SetLogger configures the logger for this context. A nil logger selects the
-// application logger. Prefix is added without changing the supplied logger.
+// application logger. A nonempty prefix is added as [prefix].
 func (ctx *Context) SetLogger(logger *log.Logger, prefix string) {
 	if logger == nil {
 		if ctx.app != nil {
@@ -88,7 +102,8 @@ func (ctx *Context) SetLogger(logger *log.Logger, prefix string) {
 	ctx.logger = withLogPrefix(logger, prefix)
 }
 
-// SetLogPrefix sets the context logger's prefix without changing its base logger.
+// SetLogPrefix sets the context logger's prefix as [prefix]. An empty prefix
+// removes the context prefix.
 func (ctx *Context) SetLogPrefix(prefix string) {
 	base := ctx.logBase
 	if base == nil {
@@ -134,11 +149,19 @@ func (ctx *Context) contextCore() *Context {
 	return ctx
 }
 
-func (ctx *Context) initContext(c context.Context, app appProvider, schema *schema) {
+func (ctx *Context) initContext(c context.Context, app appProvider, schema *schema, w io.Writer, r *http.Request) {
+	if r != nil {
+		c = r.Context()
+	}
 	if c == nil {
 		c = context.Background()
 	}
+	if w == nil {
+		w = os.Stdout
+	}
 	ctx.Context = c
+	ctx.Writer = w
+	ctx.Request = r
 	ctx.app = app
 	ctx.logBase = app.Logger()
 	ctx.logger = ctx.logBase
@@ -484,4 +507,78 @@ func copyCachedQuery(query *driver.Query) *driver.Query {
 		}
 	}
 	return &result
+}
+
+// FormValue returns the first value for name from the request's form or URL query.
+// It parses each new request on first access and panics if parsing fails.
+// A missing value or request returns an empty string.
+func (ctx *Context) FormValue(name string) string {
+	r := ctx.Request
+	if r == nil {
+		return ""
+	}
+	if ctx.parsedFormRequest != r {
+		check(r.ParseForm())
+		mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if mediaType == "multipart/form-data" {
+			check(r.ParseMultipartForm(32 << 20))
+		}
+		ctx.parsedFormRequest = r
+	}
+	return r.Form.Get(name)
+}
+
+// RW returns Writer as an http.ResponseWriter if it implements that interface.
+// Otherwise it returns nil.
+func (ctx *Context) RW() http.ResponseWriter {
+	w, _ := ctx.Writer.(http.ResponseWriter)
+	return w
+}
+
+// Header returns the response header or a local header for plain writers.
+func (ctx *Context) Header() http.Header {
+	if w := ctx.RW(); w != nil {
+		return w.Header()
+	}
+	if ctx.httpHeader == nil {
+		ctx.httpHeader = make(http.Header)
+	}
+	return ctx.httpHeader
+}
+
+// WriteHeader sends an HTTP status code when the writer supports it.
+func (ctx *Context) WriteHeader(statusCode int) {
+	if w := ctx.RW(); w != nil {
+		w.WriteHeader(statusCode)
+	}
+}
+
+func (ctx *Context) outputWriter() io.Writer {
+	if ctx.Writer == nil {
+		return os.Stdout
+	}
+	return ctx.Writer
+}
+
+// Write writes p to the underlying writer.
+func (ctx *Context) Write(p []byte) (int, error) {
+	return ctx.outputWriter().Write(p)
+}
+
+// WriteText sends a UTF-8 plain text body and returns any write error.
+func (ctx *Context) WriteText(text string) error {
+	ctx.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, err := io.WriteString(ctx.outputWriter(), text)
+	return err
+}
+
+// WriteJSON encodes value before sending a JSON response and returns any error.
+func (ctx *Context) WriteJSON(value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	ctx.Header().Set("Content-Type", "application/json")
+	_, err = ctx.Write(data)
+	return err
 }

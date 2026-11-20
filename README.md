@@ -384,7 +384,6 @@ done := make(chan struct{})
 go func() {
 	defer close(done)
 	app.Cron(cronCtx, time.Minute, func(ctx *models.Context) {
-		ctx.SetLogPrefix("cron: ")
 		ctx.SetTimeout(15 * time.Second)
 		ctx.Log("processing orders")
 		// Process orders in this transaction.
@@ -396,7 +395,7 @@ cancel()
 <-done
 ```
 
-Each run uses a new `Execute` context and transaction. Runs start at boundaries measured from the Unix epoch, never overlap, and skip boundaries missed during a run. A failed run is logged and later runs continue. Cancellation while waiting is checked at least every 15 seconds; a running callback must cooperate with cancellation. `SetTimeout` must be called before opening a driver transaction.
+Each run uses a new context and transaction, with the log prefix `[cron]`. Runs start at boundaries measured from the Unix epoch, never overlap, and skip boundaries missed during a run. A failed run is logged and later runs continue. Cancellation while waiting is checked at least every 15 seconds; a running callback must cooperate with cancellation. `SetTimeout` must be called before opening a driver transaction.
 
 ## Storage
 

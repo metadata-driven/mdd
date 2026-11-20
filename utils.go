@@ -28,7 +28,7 @@ func withLogPrefix(logger *log.Logger, prefix string) *log.Logger {
 	if prefix == "" {
 		return logger
 	}
-	return log.New(logWriter{logger: logger}, prefix, 0)
+	return log.New(logWriter{logger: logger}, "["+prefix+"] ", 0)
 }
 
 func convertPrimitive[T any](value any, name string) (result T, ok bool) {

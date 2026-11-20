@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -30,6 +32,10 @@ type appProvider interface {
 	getConn(*driver.Database) driver.Connection
 }
 
+type webContext interface {
+	HandleHTTP()
+}
+
 // Logger returns the application's logger, defaulting to the standard logger.
 func (a *Application[C]) Logger() *log.Logger {
 	if logger := a.logger.Load(); logger != nil {
@@ -39,7 +45,7 @@ func (a *Application[C]) Logger() *log.Logger {
 }
 
 // SetLogger configures the logger inherited by new contexts.
-// A nil logger selects the standard logger. Prefix is added to its output.
+// A nil logger selects the standard logger. A nonempty prefix is added as [prefix].
 func (a *Application[C]) SetLogger(logger *log.Logger, prefix string) {
 	if logger == nil {
 		logger = log.Default()
@@ -129,7 +135,24 @@ func (a *Application[C]) initPredefined() error {
 	})
 }
 
-func (a *Application[C]) Execute(c context.Context, fn func(*C)) (err error) {
+func (a *Application[C]) Execute(c context.Context, fn func(*C)) error {
+	return a.execute(c, nil, nil, "", fn)
+}
+
+// HandleHTTP runs the context's HandleHTTP method in a transaction using the
+// request's context and writer. It returns an error if the method is missing.
+// A nil request uses context.Background. A nil writer uses os.Stdout.
+// The context uses the "[http] " log prefix. Responses are written as HandleHTTP runs.
+func (a *Application[C]) HandleHTTP(w io.Writer, r *http.Request) error {
+	if _, ok := any((*C)(nil)).(webContext); !ok {
+		return fmt.Errorf("mdd: context %T must implement HandleHTTP()", (*C)(nil))
+	}
+	return a.execute(nil, w, r, "http", func(ctx *C) {
+		any(ctx).(webContext).HandleHTTP()
+	})
+}
+
+func (a *Application[C]) execute(c context.Context, w io.Writer, r *http.Request, logPrefix string, fn func(*C)) (err error) {
 	var base *Context
 	defer func() {
 		if base != nil {
@@ -149,8 +172,9 @@ func (a *Application[C]) Execute(c context.Context, fn func(*C)) (err error) {
 			logger.Printf("mdd: execute: %v", err)
 		}
 	}()
-	ctx := a.newContext(c)
+	ctx := a.newContext(c, w, r)
 	base = any(ctx).(interface{ contextCore() *Context }).contextCore()
+	base.SetLogPrefix(logPrefix)
 	check(base.Err())
 	if hook, ok := any(ctx).(interface{ OnInit() }); ok {
 		hook.OnInit()
@@ -162,6 +186,7 @@ func (a *Application[C]) Execute(c context.Context, fn func(*C)) (err error) {
 
 // Cron executes fn in a new transaction at each period boundary until c is
 // canceled. Runs do not overlap; boundaries missed during a run are skipped.
+// Each run uses the "[cron] " log prefix.
 // Period boundaries are measured from the Unix epoch. A nonpositive period
 // causes a panic. Cron blocks until the context is canceled.
 func (a *Application[C]) Cron(c context.Context, period time.Duration, fn func(*C)) {
@@ -180,7 +205,7 @@ func (a *Application[C]) Cron(c context.Context, period time.Duration, fn func(*
 		if c.Err() != nil {
 			return
 		}
-		_ = a.Execute(c, fn)
+		_ = a.execute(c, nil, nil, "cron", fn)
 	}
 }
 
@@ -199,8 +224,8 @@ func (a *Application[C]) getConn(db *driver.Database) driver.Connection {
 	return conn
 }
 
-func (a *Application[C]) newContext(base context.Context) *C {
+func (a *Application[C]) newContext(base context.Context, w io.Writer, r *http.Request) *C {
 	ctx := newBaseObject(reflect.TypeFor[C]()).(interface{ contextCore() *Context }).contextCore()
-	ctx.initContext(base, a, a.schema)
+	ctx.initContext(base, a, a.schema, w, r)
 	return ctx.getSelf().(*C)
 }
