@@ -136,24 +136,32 @@ func (a *Application[C]) initPredefined() error {
 }
 
 func (a *Application[C]) Execute(c context.Context, fn func(*C)) error {
-	return a.execute(c, nil, nil, "", fn)
+	_, err := a.execute(c, nil, nil, "", fn)
+	return err
 }
 
 // HandleHTTP runs the context's HandleHTTP method in a transaction using the
 // request's context and writer. It returns an error if the method is missing.
 // A nil request uses context.Background. A nil writer uses os.Stdout.
 // The context uses the "[http] " log prefix. Responses are written as HandleHTTP runs.
+// If an error occurs before the response starts, an HTTP writer receives a 500 response.
 func (a *Application[C]) HandleHTTP(w io.Writer, r *http.Request) error {
-	if _, ok := any((*C)(nil)).(webContext); !ok {
-		return fmt.Errorf("mdd: context %T must implement HandleHTTP()", (*C)(nil))
+	var base *Context
+	var err error
+	if _, ok := any((*C)(nil)).(webContext); ok {
+		base, err = a.execute(nil, w, r, "http", func(ctx *C) {
+			any(ctx).(webContext).HandleHTTP()
+		})
+	} else {
+		err = fmt.Errorf("mdd: context %T must implement HandleHTTP()", (*C)(nil))
 	}
-	return a.execute(nil, w, r, "http", func(ctx *C) {
-		any(ctx).(webContext).HandleHTTP()
-	})
+	if rw, ok := w.(http.ResponseWriter); err != nil && ok && (base == nil || !base.responseStarted) {
+		http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	}
+	return err
 }
 
-func (a *Application[C]) execute(c context.Context, w io.Writer, r *http.Request, logPrefix string, fn func(*C)) (err error) {
-	var base *Context
+func (a *Application[C]) execute(c context.Context, w io.Writer, r *http.Request, logPrefix string, fn func(*C)) (base *Context, err error) {
 	defer func() {
 		if base != nil {
 			defer func() {
@@ -181,7 +189,7 @@ func (a *Application[C]) execute(c context.Context, w io.Writer, r *http.Request
 	}
 	fn(ctx)
 	base.commit()
-	return nil
+	return base, nil
 }
 
 // Cron executes fn in a new transaction at each period boundary until c is
@@ -205,7 +213,7 @@ func (a *Application[C]) Cron(c context.Context, period time.Duration, fn func(*
 		if c.Err() != nil {
 			return
 		}
-		_ = a.execute(c, nil, nil, "cron", fn)
+		_, _ = a.execute(c, nil, nil, "cron", fn)
 	}
 }
 

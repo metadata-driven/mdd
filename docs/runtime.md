@@ -261,8 +261,8 @@ cancellation. The context is committed on success and rolled back on panic.
 
 Use `app.HandleHTTP(w, r)` to run your context's `HandleHTTP()` method in a
 transaction. It returns an error before initialization if the context type
-lacks this method. It sets `ctx.Request` to `r`, sets `ctx.Writer` to `w` when
-provided, and uses `r.Context()` for cancellation.
+lacks this method. It sets `ctx.Request` to `r`, uses `w` for output, and uses
+`r.Context()` for cancellation.
 
 ```go
 func (ctx *Context) HandleHTTP() {
@@ -280,16 +280,22 @@ returns the error. A missing field returns an empty string.
 For multipart uploads, use `ctx.Request.FormFile("file")`. To decode a JSON
 request, read `ctx.Request.Body`.
 
-You can also set `ctx.Request` and `ctx.Writer` directly in an `Execute`
-callback. Pass `r.Context()` to `Execute` to use the request's cancellation.
+In an `Execute` callback, set `ctx.Request` directly and use `ctx.SetWriter(w)`
+to choose the output. Pass `r.Context()` to `Execute` to use the request's
+cancellation. If you construct a context directly, call `SetWriter` before
+writing to it.
 
-`ctx.RW()` returns the underlying `http.ResponseWriter`, or nil for other
-writers. The context itself implements `http.ResponseWriter`. Its `Header`,
-`WriteHeader`, and `Write` methods forward to the HTTP writer. `WriteText(text)` and
-`WriteJSON(value)` set the content type and write the body. They return write
-errors, and `WriteJSON` returns encoding errors before setting headers or
-writing the body. The handler can decide whether to roll back the transaction by
+Pass the context itself to functions that accept an `http.ResponseWriter`.
+Its `Header`, `WriteHeader`, and `Write` methods forward to the HTTP writer.
+`WriteText(text)` and `WriteJSON(value)` set the content type and write the body.
+They return write errors, and `WriteJSON` returns encoding errors before setting
+headers or writing the body. The handler can roll back the transaction by
 panicking with the error.
+
+`app.HandleHTTP` returns the original error. With an `http.ResponseWriter`, it
+also sends a generic `500 Internal Server Error` if the context has yet to send a
+final status or start a body write. After the response starts, the client keeps
+the status and body already sent.
 
 `app.HandleHTTP` also accepts a plain `io.Writer`. In that case `Header()` holds
 local headers and `WriteHeader()` has no effect. A nil writer uses `os.Stdout`,

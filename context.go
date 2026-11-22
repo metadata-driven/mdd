@@ -25,11 +25,11 @@ type Context struct {
 
 	// Request is the HTTP request associated with the context, if any.
 	Request *http.Request
-	// Writer receives the response body. Context writes use os.Stdout if it is nil.
-	Writer io.Writer
 
+	writer            io.Writer
 	httpHeader        http.Header
 	parsedFormRequest *http.Request
+	responseStarted   bool
 
 	self          any
 	app           appProvider
@@ -156,11 +156,8 @@ func (ctx *Context) initContext(c context.Context, app appProvider, schema *sche
 	if c == nil {
 		c = context.Background()
 	}
-	if w == nil {
-		w = os.Stdout
-	}
 	ctx.Context = c
-	ctx.Writer = w
+	ctx.SetWriter(w)
 	ctx.Request = r
 	ctx.app = app
 	ctx.logBase = app.Logger()
@@ -528,16 +525,17 @@ func (ctx *Context) FormValue(name string) string {
 	return r.Form.Get(name)
 }
 
-// RW returns Writer as an http.ResponseWriter if it implements that interface.
-// Otherwise it returns nil.
-func (ctx *Context) RW() http.ResponseWriter {
-	w, _ := ctx.Writer.(http.ResponseWriter)
-	return w
+// SetWriter sets the output for response methods. A nil writer selects os.Stdout.
+func (ctx *Context) SetWriter(w io.Writer) {
+	if w == nil {
+		w = os.Stdout
+	}
+	ctx.writer = w
 }
 
 // Header returns the response header or a local header for plain writers.
 func (ctx *Context) Header() http.Header {
-	if w := ctx.RW(); w != nil {
+	if w, ok := ctx.writer.(http.ResponseWriter); ok {
 		return w.Header()
 	}
 	if ctx.httpHeader == nil {
@@ -548,27 +546,25 @@ func (ctx *Context) Header() http.Header {
 
 // WriteHeader sends an HTTP status code when the writer supports it.
 func (ctx *Context) WriteHeader(statusCode int) {
-	if w := ctx.RW(); w != nil {
+	if w, ok := ctx.writer.(http.ResponseWriter); ok {
 		w.WriteHeader(statusCode)
+		if statusCode >= 200 || statusCode == http.StatusSwitchingProtocols {
+			ctx.responseStarted = true
+		}
 	}
-}
-
-func (ctx *Context) outputWriter() io.Writer {
-	if ctx.Writer == nil {
-		return os.Stdout
-	}
-	return ctx.Writer
 }
 
 // Write writes p to the underlying writer.
 func (ctx *Context) Write(p []byte) (int, error) {
-	return ctx.outputWriter().Write(p)
+	ctx.responseStarted = true
+	return ctx.writer.Write(p)
 }
 
 // WriteText sends a UTF-8 plain text body and returns any write error.
 func (ctx *Context) WriteText(text string) error {
 	ctx.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, err := io.WriteString(ctx.outputWriter(), text)
+	ctx.responseStarted = true
+	_, err := io.WriteString(ctx.writer, text)
 	return err
 }
 
