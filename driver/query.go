@@ -10,6 +10,10 @@ type Query struct {
 	Limit   int64         `json:"limit,omitempty"`
 	Offset  string        `json:"offset,omitempty"`
 	Extra   any           `json:"extra,omitempty"`
+
+	// RawSQL selects IDs through SQLTransaction.FetchSQL.
+	RawSQL     *SQLExpression  `json:"raw_sql,omitempty"`
+	SQLFilters []SQLExpression `json:"sql_filters,omitempty"`
 }
 
 // QueryJoin adds a left join within the same database. Source identifies a
@@ -73,3 +77,10 @@ const (
 	// OpContainsAny matches collections containing at least one supplied value.
 	OpContainsAny = "|="
 )
+
+// SQLExpression contains a driver-native SQL statement or predicate and the
+// arguments for its placeholders. SQL text is supplied by the application.
+type SQLExpression struct {
+	Text string `json:"text"`
+	Args []any  `json:"args,omitempty"`
+}

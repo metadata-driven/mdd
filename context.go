@@ -258,10 +258,41 @@ func (ctx *Context) txDelete(obj *Object, exists bool) {
 	}
 }
 
-func (ctx *Context) txFetch(tab *metaTable, query *driver.Query, fetcher func(uint64) error) string {
+func (ctx *Context) txFetch(tab *metaTable, query *driver.Query, fetcher func(uint64) error) {
 	check(ctx.Err())
 	ctx.flush()
-	return must(ctx.transaction(tab).Fetch(query, fetcher))
+	tx := ctx.transaction(tab)
+	sqlTx, supportsSQL := tx.(driver.SQLTransaction)
+	rawSQL := query.RawSQL
+	if (rawSQL != nil || len(query.SQLFilters) != 0) && !supportsSQL {
+		panic(driver.ErrSQLUnsupported)
+	}
+	if rawSQL == nil {
+		_, err := tx.Fetch(query, fetcher)
+		check(err)
+		return
+	}
+	if query.Index != "" || len(query.Joins) != 0 || len(query.Filters) != 0 ||
+		len(query.SQLFilters) != 0 || len(query.Order) != 0 || query.Offset != "" {
+		panic(errors.New("raw SQL query cannot be combined with an index, joins, filters, ordering, or offset"))
+	}
+	// Close the SQL rows before delivering IDs so model callbacks can use the transaction.
+	var ids []uint64
+	check(sqlTx.FetchSQL(rawSQL.Text, rawSQL.Args, func(id uint64) error {
+		ids = append(ids, id)
+		if query.Limit > 0 && int64(len(ids)) == query.Limit {
+			return driver.ErrBreak
+		}
+		return nil
+	}))
+	for _, id := range ids {
+		if err := fetcher(id); err != nil {
+			if driver.IsBreak(err) {
+				break
+			}
+			check(err)
+		}
+	}
 }
 
 func (ctx *Context) flush() {

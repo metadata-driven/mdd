@@ -668,3 +668,48 @@ items when using persistent storage.
 
 `Object.Get` reads the driver row, including binary byte slices. Files are
 returned as lazy readers.
+
+## Native SQL queries
+
+MySQL and SQLite support SQL predicates on a regular set.
+
+```go
+orders := ctx.Orders().
+    Filter("status", OrderStatusPlaced).
+    WhereSQL("j0.amount >= ? OR j0.amount < ?", minimum, refundThreshold).
+    Order("-ts").
+    Limit(50)
+```
+
+Each `WhereSQL` call adds a parenthesized predicate with `AND`. Use physical
+column names and `j0` as the stable alias of the model's primary table. Use
+`?` placeholders and pass the values as separate arguments. Arguments use
+the SQL driver's binding types. Structured filters, ordering, and pagination
+continue to apply.
+
+Use a full SQL query when you need to control joins, grouping, or other
+clauses directly.
+
+```go
+orders := mdd.NewSQLQuery[Order](ctx,
+    "SELECT id FROM orders WHERE amount >= ? ORDER BY ts DESC, id DESC", minimum)
+
+// Select the model by name at runtime.
+dynamic := ctx.NewSQLQuery("orders",
+    "SELECT id FROM orders WHERE amount >= ? ORDER BY ts DESC, id DESC", minimum)
+```
+
+The runtime runs the statement in the selected model's storage transaction.
+Supply a trusted read query that returns exactly one column of nonzero IDs from
+the model's primary table. Each ID becomes a model object, in the order returned
+by the SQL statement. If joins can produce duplicate IDs, use `DISTINCT` when
+you want each object once. Express filters, ordering, and offsets in the
+statement. `Limit(n)` caps the number of IDs the runtime reads, and `First()`
+reads at most one. Add `LIMIT` to the SQL when the database should apply the limit.
+
+Drivers implement `driver.SQLTransaction` to support native SQL. Regular
+`Fetch` calls receive predicates in `driver.Query.SQLFilters`. MDD sends
+`driver.Query.RawSQL` directly to `FetchSQL(statement, args, callback)`. It streams
+IDs with the SQL rows open and returns an error. MDD delivers model objects
+after the driver closes the rows so model callbacks can use the same transaction.
+Execution on other drivers fails with `driver.ErrSQLUnsupported`.

@@ -21,6 +21,7 @@ import (
 
 	"github.com/metadata-driven/mdd/driver"
 	"github.com/metadata-driven/mdd/driver/internal/query"
+	"github.com/metadata-driven/mdd/driver/internal/sqlquery"
 	sqlite "modernc.org/sqlite"
 )
 
@@ -93,7 +94,9 @@ func (c *Connection) OpenTransaction(ctx context.Context) (driver.Transaction, e
 	}
 	return &transaction{c: c, tx: tx, ctx: ctx}, nil
 }
+
 func quote(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
+
 func lockError(err error) error {
 	if err == nil {
 		return nil
@@ -104,6 +107,7 @@ func lockError(err error) error {
 	}
 	return err
 }
+
 func columnType(c *driver.Column) (string, error) {
 	switch c.Type {
 	case driver.TypeID, driver.TypeBoolean, driver.TypeInteger:
@@ -484,6 +488,7 @@ func (t *transaction) table(name string) (*driver.Table, error) {
 	}
 	return tab, nil
 }
+
 func (t *transaction) readFile(table string, id uint64, field string) (io.ReadCloser, error) {
 	var data []byte
 	var size sql.NullInt64
@@ -586,6 +591,7 @@ func (t *transaction) Get(table string, id uint64) (driver.DataObject, error) {
 	}
 	return out, nil
 }
+
 func sortedKeys(data driver.DataObject) []string {
 	keys := make([]string, 0, len(data))
 	for k := range data {
@@ -594,6 +600,7 @@ func sortedKeys(data driver.DataObject) []string {
 	sort.Strings(keys)
 	return keys
 }
+
 func (t *transaction) Set(table string, id uint64, data driver.DataObject) (uint64, error) {
 	tab, err := t.table(table)
 	if err != nil {
@@ -693,6 +700,7 @@ func (t *transaction) Increment(table string, id uint64, data driver.DataObject)
 	_, err = t.tx.ExecContext(t.ctx, "UPDATE "+quote(table)+" SET "+strings.Join(set, ",")+" WHERE id=?", args...)
 	return lockError(err)
 }
+
 func (t *transaction) Delete(table string, id uint64) error {
 	if _, err := t.table(table); err != nil {
 		return err
@@ -703,9 +711,13 @@ func (t *transaction) Delete(table string, id uint64) error {
 	_, err := t.tx.ExecContext(t.ctx, "DELETE FROM "+quote(table)+" WHERE id=?", id)
 	return lockError(err)
 }
+
 func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, error) {
 	if q == nil || fn == nil {
 		return "", errors.New("sqlite: query and callback are required")
+	}
+	if q.RawSQL != nil {
+		return "", errors.New("sqlite: use FetchSQL for a raw SQL query")
 	}
 	if q.Extra != nil {
 		return "", errors.New("sqlite: extended queries are not supported")
@@ -715,9 +727,9 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		return "", fmt.Errorf("sqlite: %w", err)
 	}
 	idx := plan.Index
-	from := plan.FromSQL(quote)
+	from := sqlquery.From(plan, quote)
 	idColumn, _ := plan.Column("", "id")
-	idSQL := idColumn.SQL(quote)
+	idSQL := sqlquery.Column(idColumn, quote)
 	var where []string
 	var args []any
 	for _, f := range q.Filters {
@@ -741,7 +753,7 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 			if f.Op == driver.OpContainsAny {
 				match = "mdd_json_contains_any"
 			}
-			where = append(where, match+"("+col.SQL(quote)+", ?) = 1")
+			where = append(where, match+"("+sqlquery.Column(col, quote)+", ?) = 1")
 			args = append(args, string(candidates))
 			continue
 		}
@@ -778,9 +790,9 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 				return "", e
 			}
 			if op == driver.OpMatch {
-				clauses = append(clauses, "instr("+col.SQL(quote)+",?)>0")
+				clauses = append(clauses, "instr("+sqlquery.Column(col, quote)+",?)>0")
 			} else {
-				clauses = append(clauses, col.SQL(quote)+op+"?")
+				clauses = append(clauses, sqlquery.Column(col, quote)+op+"?")
 			}
 			args = append(args, val)
 		}
@@ -810,7 +822,7 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		if col.Type == driver.TypeJSON {
 			return "", errors.New("sqlite: cannot order JSON")
 		}
-		keys = append(keys, sortKey{col.SQL(quote), item.Desc})
+		keys = append(keys, sortKey{sqlquery.Column(col, quote), item.Desc})
 	}
 	if len(order) == 0 || order[len(order)-1].Source != "" || order[len(order)-1].Column != "id" {
 		desc := len(order) > 0 && order[len(order)-1].Desc
@@ -823,11 +835,15 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 			return "", fmt.Errorf("sqlite: invalid offset: %w", err)
 		}
 	}
+	where, args, err = sqlquery.AppendSQLFilters(where, args, q.SQLFilters)
+	if err != nil {
+		return "", fmt.Errorf("sqlite: %w", err)
+	}
 	if offset > 0 {
 		var alternatives []string
 		for i, key := range keys {
 			var parts []string
-			for j := 0; j < i; j++ {
+			for j := range i {
 				parts = append(parts, keys[j].expr+" IS (SELECT "+keys[j].expr+" FROM "+from+" WHERE "+idSQL+"=?)")
 				args = append(args, offset)
 			}
@@ -863,23 +879,12 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		query += " LIMIT ?"
 		args = append(args, q.Limit)
 	}
-	rows, err := t.tx.QueryContext(t.ctx, query, args...)
-	if err != nil {
-		return "", lockError(err)
-	}
 	var ids []uint64
-	for rows.Next() {
-		var id uint64
-		if err = rows.Scan(&id); err != nil {
-			rows.Close()
-			return "", err
-		}
+	if err := t.FetchSQL(query, args, func(id uint64) error {
 		ids = append(ids, id)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return "", lockError(err)
+		return nil
+	}); err != nil {
+		return "", err
 	}
 	last := offset
 	for _, id := range ids {
@@ -892,4 +897,16 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		}
 	}
 	return strconv.FormatUint(last, 10), nil
+}
+
+// FetchSQL streams record IDs from a native read query.
+func (t *transaction) FetchSQL(statement string, args []any, fn func(uint64) error) error {
+	if strings.TrimSpace(statement) == "" || fn == nil {
+		return errors.New("sqlite: SQL statement and callback are required")
+	}
+	rows, err := t.tx.QueryContext(t.ctx, statement, args...)
+	if err != nil {
+		return lockError(err)
+	}
+	return lockError(sqlquery.ScanIDs(rows, fn))
 }

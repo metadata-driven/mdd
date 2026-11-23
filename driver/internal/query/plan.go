@@ -3,7 +3,6 @@ package query
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/metadata-driven/mdd/driver"
 )
@@ -85,22 +84,4 @@ func tableColumn(table *driver.Table, name string) *driver.Column {
 		return &driver.Column{Name: "id", Type: driver.TypeID}
 	}
 	return table.ColumnByName(name)
-}
-
-// SQL qualifies a column with its generated source alias.
-func (c Column) SQL(quote func(string) string) string {
-	return quote(fmt.Sprintf("j%d", c.Source)) + "." + quote(c.Name)
-}
-
-// FromSQL builds the FROM clause and all left joins with generated aliases.
-func (p *Plan) FromSQL(quote func(string) string) string {
-	var sql strings.Builder
-	sql.WriteString(quote(p.Sources[0].Table.Name) + " AS " + quote("j0"))
-	for i, source := range p.Sources[1:] {
-		alias := quote(fmt.Sprintf("j%d", i+1))
-		parent := quote(fmt.Sprintf("j%d", source.Parent))
-		sql.WriteString(" LEFT JOIN " + quote(source.Table.Name) + " AS " + alias)
-		sql.WriteString(" ON " + parent + "." + quote(source.Key) + "=" + alias + "." + quote("id"))
-	}
-	return sql.String()
 }

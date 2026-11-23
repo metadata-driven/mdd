@@ -32,6 +32,12 @@ func (ctx *Context) NewSet(name string) *ObjectSet {
 	return &ObjectSet{ctx: ctx, tab: tab, query: &driver.Query{Table: tab.Table.Name}}
 }
 
+// NewSQLQuery creates a model set selected by a driver-native SQL query.
+// The query must return one column of model IDs.
+func (ctx *Context) NewSQLQuery(name, statement string, args ...any) *ObjectSet {
+	return ctx.NewSet(name).withSQLQuery(statement, args)
+}
+
 // Model returns the metadata for this set's model.
 func (s *Set[T]) Model() meta.Model {
 	if s == nil {
@@ -107,6 +113,7 @@ func (s *Set[T]) copyQuery() *driver.Query {
 	q.Joins = slices.Clone(s.query.Joins)
 	q.Filters = slices.Clone(s.query.Filters)
 	q.Order = slices.Clone(s.query.Order)
+	q.SQLFilters = slices.Clone(s.query.SQLFilters)
 	return &q
 }
 
@@ -222,6 +229,38 @@ func (s *Set[T]) Offset(offset string) *Set[T] {
 	}
 	s.query.Offset = offset
 	return s
+}
+
+// WhereSQL adds a driver-native WHERE predicate, combined with AND.
+// Reference the primary table as j0 and bind values with ? placeholders.
+func (s *Set[T]) WhereSQL(predicate string, args ...any) *Set[T] {
+	if s == nil {
+		return nil
+	}
+	s.query.SQLFilters = append(s.query.SQLFilters, newSQLExpression(predicate, args))
+	return s
+}
+
+func (s *Set[T]) withSQLQuery(statement string, args []any) *Set[T] {
+	if s == nil {
+		return nil
+	}
+	expression := newSQLExpression(statement, args)
+	s.query.RawSQL = &expression
+	return s
+}
+
+func newSQLExpression(text string, args []any) driver.SQLExpression {
+	if strings.TrimSpace(text) == "" {
+		panic("mdd: empty SQL expression")
+	}
+	args = slices.Clone(args)
+	for i, arg := range args {
+		if data, ok := arg.([]byte); ok {
+			args[i] = slices.Clone(data)
+		}
+	}
+	return driver.SQLExpression{Text: text, Args: args}
 }
 
 // Count returns the number of objects in the current query.

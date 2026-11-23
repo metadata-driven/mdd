@@ -234,6 +234,9 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 	if q == nil || fn == nil {
 		return "", fmt.Errorf("mem: query and callback are required")
 	}
+	if q.RawSQL != nil || len(q.SQLFilters) != 0 {
+		return "", driver.ErrSQLUnsupported
+	}
 	if q.Extra != nil {
 		return "", fmt.Errorf("mem: extended queries are not supported")
 	}

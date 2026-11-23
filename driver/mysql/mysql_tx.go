@@ -16,6 +16,7 @@ import (
 	"github.com/goldic/js"
 	"github.com/metadata-driven/mdd/driver"
 	queryplan "github.com/metadata-driven/mdd/driver/internal/query"
+	"github.com/metadata-driven/mdd/driver/internal/sqlquery"
 )
 
 type transaction struct {
@@ -360,6 +361,9 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 	if query == nil || fn == nil {
 		return "", fmt.Errorf("mysql: query and callback are required")
 	}
+	if query.RawSQL != nil {
+		return "", errors.New("mysql: use FetchSQL for a raw SQL query")
+	}
 	if query.Extra != nil {
 		return "", fmt.Errorf("mysql: extended queries are not supported")
 	}
@@ -368,9 +372,9 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 		return "", fmt.Errorf("mysql: %w", err)
 	}
 	idx := plan.Index
-	from := plan.FromSQL(escName)
+	from := sqlquery.From(plan, escName)
 	idColumn, _ := plan.Column("", "id")
-	idSQL := idColumn.SQL(escName)
+	idSQL := sqlquery.Column(idColumn, escName)
 	var where []string
 	var args []any
 	for _, f := range query.Filters {
@@ -397,7 +401,7 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 					groups = append(groups, f.Values[i:i+1])
 				}
 			}
-			check := "JSON_CONTAINS(COALESCE(NULLIF(" + col.SQL(escName) + ", ''), '[]'), ?)"
+			check := "JSON_CONTAINS(COALESCE(NULLIF(" + sqlquery.Column(col, escName) + ", ''), '[]'), ?)"
 			clauses := make([]string, 0, len(groups))
 			for _, group := range groups {
 				candidates, err := json.Marshal(group)
@@ -440,9 +444,9 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 				value = driver.DefaultValue(col.Type)
 			}
 			if op == driver.OpMatch {
-				clauses = append(clauses, "LOCATE(?, "+col.SQL(escName)+") > 0")
+				clauses = append(clauses, "LOCATE(?, "+sqlquery.Column(col, escName)+") > 0")
 			} else {
-				clauses = append(clauses, col.SQL(escName)+op+"?")
+				clauses = append(clauses, sqlquery.Column(col, escName)+op+"?")
 			}
 			args = append(args, value)
 		}
@@ -468,7 +472,7 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 		if err != nil {
 			return "", fmt.Errorf("mysql: %w", err)
 		}
-		orderSQL[i] = col.SQL(escName)
+		orderSQL[i] = sqlquery.Column(col, escName)
 	}
 	offsetID := uint64(0)
 	if query.Offset != "" {
@@ -476,6 +480,10 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 		if err != nil {
 			return "", fmt.Errorf("mysql: invalid offset: %w", err)
 		}
+	}
+	where, args, err = sqlquery.AppendSQLFilters(where, args, query.SQLFilters)
+	if err != nil {
+		return "", fmt.Errorf("mysql: %w", err)
 	}
 	if offsetID > 0 {
 		var alternatives []string
@@ -523,41 +531,36 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 		args = append(args, query.Limit)
 	}
 
-	//------ exec
-	// todo: fetch ids by batches(~1-100k); don`t request all ids
-	rows, err := t.dbTx.QueryContext(t.ctx, t.traceSQL(b.String()), args...)
-	if err != nil {
-		return
+	var ids []uint64
+	if err := t.FetchSQL(b.String(), args, func(id uint64) error {
+		ids = append(ids, id)
+		return nil
+	}); err != nil {
+		return "", err
 	}
-	ids := func() (res []uint64) {
-		defer rows.Close()
-		var id uint64
-		for rows.Next() {
-			if err = rows.Scan(&id); err != nil {
-				return
-			}
-			res = append(res, id)
-		}
-		err = rows.Err()
-		return
-	}()
-	if err != nil {
-		return
-	}
-	//------ fetch results
+	last := offsetID
 	for _, id := range ids {
-		offsetID = id
-		if err = fn(id); err != nil {
+		last = id
+		if err := fn(id); err != nil {
 			if driver.IsBreak(err) {
-				err = nil
 				break
 			}
-			return
+			return "", err
 		}
 	}
-	// set new offset
-	nextOffset = js.ToStr(offsetID)
-	return
+	return strconv.FormatUint(last, 10), nil
+}
+
+// FetchSQL streams record IDs from a native read query.
+func (t *transaction) FetchSQL(statement string, args []any, fn func(uint64) error) error {
+	if strings.TrimSpace(statement) == "" || fn == nil {
+		return errors.New("mysql: SQL statement and callback are required")
+	}
+	rows, err := t.dbTx.QueryContext(t.ctx, t.traceSQL(statement), args...)
+	if err != nil {
+		return err
+	}
+	return sqlquery.ScanIDs(rows, fn)
 }
 
 func (t *transaction) traceSQL(q string) string {

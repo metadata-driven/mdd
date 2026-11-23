@@ -81,6 +81,16 @@ func NewQuery[T any, P interface {
 	return NewSet[T](ctx).Query(query)
 }
 
+// NewSQLQuery creates a set for T using a driver-native SQL query.
+// Supply a trusted read query returning one column of IDs from T's primary
+// table. Express filtering, ordering and offsets in the statement.
+func NewSQLQuery[T any, P interface {
+	*S
+	contextCore() *Context
+}, S any](ctx P, statement string, args ...any) *Set[T] {
+	return NewSet[T](ctx).withSQLQuery(statement, args)
+}
+
 // Item returns the shared predefined model or enumeration item at path.
 func Item[T any](cfg meta.Config, path string) *T {
 	if cfg == nil {

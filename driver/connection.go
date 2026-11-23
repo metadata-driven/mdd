@@ -49,6 +49,16 @@ type Transaction interface {
 	Fetch(*Query, func(id uint64) error) (nextOffset string, err error)
 }
 
+// SQLTransaction supports SQLFilters in Fetch and native statements in FetchSQL.
+type SQLTransaction interface {
+	Transaction
+
+	// FetchSQL streams a single column of record IDs from a native read query.
+	// ErrBreak stops iteration successfully. Other callback errors are returned.
+	// The callback runs with the rows open. Use the transaction after FetchSQL returns.
+	FetchSQL(statement string, args []any, fn func(id uint64) error) error
+}
+
 // DataObject maps column names to their values.
 type DataObject = js.Object
 
@@ -59,6 +69,8 @@ var (
 	ErrBreak = errors.New("break")
 	// ErrNotFound indicates that a requested record does not exist.
 	ErrNotFound = errors.New("mdd: object not found")
+	// ErrSQLUnsupported indicates that the storage driver does not support SQL queries.
+	ErrSQLUnsupported = errors.New("driver: SQL queries are not supported")
 )
 
 // IsBreak reports whether err is or wraps ErrBreak.

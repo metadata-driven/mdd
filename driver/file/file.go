@@ -505,6 +505,9 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 		return "", err
 	}
 	if q != nil {
+		if q.RawSQL != nil || len(q.SQLFilters) != 0 {
+			return "", driver.ErrSQLUnsupported
+		}
 		plan, err := query.Resolve(t.conn.schema, q)
 		if err != nil {
 			return "", fmt.Errorf("file: %w", err)
