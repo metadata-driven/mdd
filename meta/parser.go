@@ -2,21 +2,36 @@ package meta
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
 
 	"github.com/goldic/js"
 	"github.com/goldic/try"
 	"gopkg.in/yaml.v2"
 )
 
-// ParseYAML loads the original document and warms all metadata accessors.
-// Interpretation and validation belong to node methods, not the YAML loader.
+// CurrentVersion is the metadata format version used when version is omitted.
+const CurrentVersion = "1.0"
+
+var currentMajorVersion, _ = parseVersion(CurrentVersion)
+
+// ParseYAML checks the document version and warms all metadata accessors.
 func ParseYAML(data []byte) (config Config, err error) {
 	defer try.Catch(&err)
 	var value any
-	if parseErr := yaml.UnmarshalStrict(data, &value); parseErr != nil {
-		panic(fmt.Errorf("parse metadata YAML: %w", parseErr))
+	if err = yaml.UnmarshalStrict(data, &value); err != nil {
+		return nil, fmt.Errorf("parse metadata YAML: %w", err)
 	}
-	config = newRootNode(stringMap(value, "root"))
+	raw := stringMap(value, "root")
+	version, err := normalizeVersion(raw, data)
+	if err != nil {
+		return nil, fmt.Errorf("parse metadata YAML: %w", err)
+	}
+	if major, _ := parseVersion(version); major != currentMajorVersion {
+		panic(fmt.Errorf("unsupported metadata version %v: this parser supports %d.x", version, currentMajorVersion))
+	}
+
+	config = newRootNode(raw)
 	return
 }
 
@@ -121,4 +136,37 @@ func stringList(value any, location string) []string {
 		}
 	}
 	return result
+}
+
+func normalizeVersion(raw js.Object, orgYAML []byte) (version string, err error) {
+	if !raw.Has("version") {
+		raw.Set("version", CurrentVersion)
+	}
+	if _, ok := raw.Get("version").Any().(string); !ok { // is not string get raw version
+		var obj struct {
+			RawVersion string `yaml:"version"`
+		}
+		if err = yaml.Unmarshal(orgYAML, &obj); err != nil { // not strict Unmarshal
+			return "", err
+		}
+		raw.Set("version", obj.RawVersion)
+	}
+	version = strings.TrimSpace(raw.GetStr("version"))
+	if !strings.ContainsRune(version, '.') {
+		version += ".0"
+	}
+	raw.Set("version", version) // set normalized version
+	return
+}
+
+var versionPattern = regexp.MustCompile(`^([0-9]+)\.([0-9]+)$`)
+
+func parseVersion(version string) (major, minor int) {
+	parts := versionPattern.FindStringSubmatch(version)
+	if parts == nil {
+		panic(fmt.Errorf("metadata version must be in major.minor format"))
+	}
+	major = js.ToInt(strings.TrimLeft(parts[1], "0"))
+	minor = js.ToInt(strings.TrimLeft(parts[2], "0"))
+	return
 }

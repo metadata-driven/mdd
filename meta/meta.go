@@ -44,6 +44,9 @@ type Node interface {
 type Config interface {
 	Node
 
+	// Version returns the document's format version or the parser's current version.
+	Version() string
+
 	Types() []Primitive
 	AllTypes() []Node
 	Domains() []Domain

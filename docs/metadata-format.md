@@ -27,6 +27,8 @@ The Go parser fixture is [`meta/testdata/config.yaml`](../meta/testdata/config.y
 ## Document structure
 
 ```yaml
+version: 1.0
+
 project:
   name: example-app
 
@@ -37,6 +39,7 @@ sources: []
 
 | Section | Meaning |
 | --- | --- |
+| `version` | Optional version of the metadata format. |
 | `project` | Metadata for the application or configuration document. |
 | `domains` | Optional logical classifications referenced by models and attributes. |
 | `models` | Ordered model declarations; this section exists only at the document root. |
@@ -46,6 +49,11 @@ The order of top-level mapping keys has no meaning. The order of models,
 attributes, enum values, indexes, and predefined items is preserved and
 may be used by editors and generators. For an item without an explicit `id`,
 this order also determines its effective ID.
+
+The Go parser defaults to format version `1.0` and accepts any `1.x` version.
+The value may be an unquoted scalar or a quoted string in `major.minor` form.
+`Config.Version()` returns the effective version as a string, preserving values
+such as `"1.10"` exactly.
 
 ## Common metadata object
 

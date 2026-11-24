@@ -92,6 +92,7 @@ func (o *node) Icon() string        { return o.icon }
 func (o *node) Conn() string        { return o.conn }
 func (o *node) LookupQuery() string { return o.lookupQuery }
 func (o *node) Model() string       { return o.model }
+func (o *node) Version() string     { return o.raw.GetStr("version") }
 
 func (o *node) ItemID() any { return o.itemID }
 
