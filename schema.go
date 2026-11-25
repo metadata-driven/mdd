@@ -653,7 +653,7 @@ func (s *schema) convertModel(model meta.Model) error {
 		return storage, nil
 	}
 
-	id := model.ID()
+	id := tab.Attrs["id"]
 	if id == nil || id.Type().PrimitiveTypeName() != meta.TypeID {
 		return fmt.Errorf("schema: %s requires a uint64 id", model.Path())
 	}
@@ -717,7 +717,7 @@ func (s *schema) convertModel(model meta.Model) error {
 	}
 	if source := id.Source(); source != nil {
 		if storage := s.tablesBySet[[2]string{setName, source.Name()}]; storage != nil && storage.Model.Path() == owner {
-			tab.Attrs[id.Name()].table = storage
+			id.table = storage
 		}
 	}
 	tab.storage = []*metaTable{tab}

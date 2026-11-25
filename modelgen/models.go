@@ -197,9 +197,6 @@ func (g *generator) model(model meta.Model) error {
 	if err := g.group(file, token.VAR, false, modelType, bindingMember("_", name, "RegisterModel", model.Path())); err != nil {
 		return err
 	}
-	if id := model.ID(); id != nil && id.Type().PrimitiveTypeName() != meta.TypeID {
-		return fmt.Errorf("%s.id: the Go runtime requires type id for model identifiers", model.Path())
-	}
 	if set := model.SetName(); set != "" {
 		if method := goName(set); method == "Context" || method == "MDDApp" {
 			return fmt.Errorf("%s: set %q conflicts with the embedded mdd.Context API", model.Path(), set)
@@ -248,8 +245,8 @@ func (g *generator) accessors(file *sourceFile, model meta.Model, name, receiver
 		obj := f.localName(receiver)
 		return fmt.Sprintf("func (%s *%s) Context() *Context { return %s[Context](%s) }", obj, name, call, obj)
 	})}
-	if id := model.ID(); id != nil {
-		getters = append(getters, methodMember(name, "ID", id.Path(), func(f *sourceFile) string {
+	if model.SetName() != "" {
+		getters = append(getters, methodMember(name, "ID", model.Path()+".id", func(f *sourceFile) string {
 			call := f.qualify(runtimeImport, "ID")
 			obj := f.localName(receiver)
 			return fmt.Sprintf("func (%s *%s) ID() uint64 { return %s(%s) }", obj, name, call, obj)

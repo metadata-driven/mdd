@@ -127,11 +127,12 @@ func validationSingleValue(attr Attribute, value any, location string) {
 				panic(fmt.Errorf("%s: predefined item %q does not belong to model %q", location, path, target.Path()))
 			}
 		}
-		id := target.(Model).ID()
-		if id == nil {
+		if target.(Model).SetName() == "" {
 			panic(fmt.Errorf("%s: referenced model %q has no identifier", location, target.Path()))
 		}
-		validationScalarValue(id, value, location)
+		if !validationInteger(value, false) {
+			panic(fmt.Errorf("%s: value %v is incompatible with type %q", location, value, TypeID))
+		}
 	default:
 		validationScalarValue(attr, value, location)
 	}

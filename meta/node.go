@@ -65,7 +65,6 @@ const (
 	cacheSource
 	cacheType
 	cacheQuery
-	cacheID
 	cacheIndexes
 	cacheStore
 	cacheMemorySource
@@ -648,15 +647,6 @@ func (o *node) SetName() string {
 	return o.set
 }
 
-func (o *node) ID() Attribute {
-	return cached(o, cacheID, func() Attribute {
-		if o.section != "models" {
-			return nil
-		}
-		return findByName(o.Attrs(), "id")
-	})
-}
-
 func (o *node) Type() TypeInfo {
 	return cached(o, cacheType, func() TypeInfo {
 		if o.section != "attrs" {
@@ -696,8 +686,8 @@ func (o *node) Type() TypeInfo {
 		case KindEnum:
 			result.Primitive = findByName(o.root.Types(), TypeString)
 		case KindModel:
-			if id := result.Target.(Model).ID(); id != nil {
-				result.Primitive = id.Type().Primitive
+			if result.Target.(Model).SetName() != "" {
+				result.Primitive = findByName(o.root.Types(), TypeID)
 			}
 		}
 		return result
@@ -745,7 +735,6 @@ func (o *node) warmCache() {
 		o.Items()
 		o.Indexes()
 		o.Source()
-		o.ID()
 	case KindAttr, KindSet, KindEnum:
 		o.Type()
 		o.Domains()

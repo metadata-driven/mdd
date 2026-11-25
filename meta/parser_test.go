@@ -118,8 +118,9 @@ func TestParseYAMLTypesAndReferences(t *testing.T) {
 
 	for _, name := range []string{"user", "session", "order", "host"} {
 		model := lookupNode(t, cfg, name)
-		assertNode(t, model.ID(), KindAttr, "id", name+".id")
-		assertSameNode(t, model.ID().Type().Target, cfg.Lookup("types.id"))
+		id := findByName(model.Attrs(), "id")
+		assertNode(t, id, KindAttr, "id", name+".id")
+		assertSameNode(t, id.Type().Target, cfg.Lookup("types.id"))
 	}
 
 	userType := lookupNodeKind(t, cfg, "user.type", KindEnum)
@@ -170,7 +171,7 @@ func TestParseYAMLAttributeGroups(t *testing.T) {
 	assertEqual(t, groups[0].Options().GetStr("layout"), "compact")
 	assertSameSlice(t, groups, user.Groups())
 	require(t, cfg.Lookup("user.groups.general.login") == nil, "group must not change attribute paths")
-	assertSameNode(t, user.ID(), cfg.Lookup("user.id"))
+	assertSameNode(t, findByName(user.Attrs(), "id"), cfg.Lookup("user.id"))
 	assertEqual(t, len(cfg.Lookup("session").(Model).Groups()), 0)
 }
 
@@ -263,7 +264,7 @@ models:
 	assertSameNode(t, lookupNode(t, cfg, "person.last_note").Type().Target, note)
 	assertEqual(t, lookupNode(t, cfg, "person.last_note").Type().Primitive.Name(), TypeID)
 	assertNames(t, lookupNode(t, cfg, "person").Attrs(), "last_note", "id")
-	require(t, lookupNode(t, cfg, "summary").ID() == nil, "a model without a set must not receive an implicit ID")
+	require(t, cfg.Lookup("summary.id") == nil, "a model without a set must not receive an implicit ID")
 	assertEqual(t, lookupNode(t, cfg, "summary.amount").Type().Precision, 0)
 	assertEqual(t, lookupNode(t, cfg, "summary.amount").Type().Scale, 0)
 }

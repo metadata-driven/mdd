@@ -82,8 +82,6 @@ type Model interface {
 	Items() []Item
 	Indexes() []Index
 	Source() Source
-	// ID returns the generated identifier attribute if the model has a set.
-	ID() Attribute
 }
 
 // ModelObject identifies a Go model that exposes its MDD object.
