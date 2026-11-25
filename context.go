@@ -1,8 +1,8 @@
 package mdd
 
 import (
-	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,12 +12,10 @@ import (
 	"net/http"
 	"os"
 	"reflect"
-	"slices"
 	"time"
 
 	"github.com/metadata-driven/mdd/driver"
 	"github.com/metadata-driven/mdd/meta"
-	"github.com/metadata-driven/mdd/xquery"
 )
 
 type Context struct {
@@ -171,14 +169,14 @@ func (ctx *Context) metaTableByType(typ reflect.Type) *metaTable {
 	return ctx.schema.metaTableByType(typ)
 }
 
-func (ctx *Context) transaction(tab *metaTable) driver.Transaction {
+func (ctx *Context) transaction(db *driver.Database) driver.Transaction {
 	check(ctx.Err())
-	if tx := ctx.txs[tab.Database]; tx != nil {
+	if tx := ctx.txs[db]; tx != nil {
 		return tx
 	}
 	ctx.txStarted = true
-	tx := must(ctx.app.getConn(tab.Database).OpenTransaction(ctx.Context))
-	ctx.txs[tab.Database] = tx
+	tx := must(ctx.app.getConn(db).OpenTransaction(ctx.Context))
+	ctx.txs[db] = tx
 	return tx
 }
 
@@ -200,6 +198,44 @@ func (ctx *Context) Rollback() {
 		panic("mdd: cannot roll back during commit")
 	}
 	ctx.rollback()
+}
+
+// SQLExecute runs a native SQL statement in the transaction for a metadata
+// source. It flushes pending model changes first and panics on failure.
+func (ctx *Context) SQLExecute(source, statement string, args ...any) sql.Result {
+	if ctx.constant {
+		panic("mdd: a predefined object has no transaction context")
+	}
+	ctx.checkWritable()
+	for _, db := range ctx.schema.databases {
+		if db.Name != source {
+			continue
+		}
+		ctx.flush()
+		tx, ok := ctx.transaction(db).(driver.SQLExecutor)
+		if !ok {
+			panic(driver.ErrSQLUnsupported)
+		}
+		result, err := tx.ExecSQL(statement, args...)
+		ctx.invalidateSourceCache(db)
+		return must(result, err)
+	}
+	panic(fmt.Errorf("mdd: unknown storage source %q", source))
+}
+
+func (ctx *Context) invalidateSourceCache(db *driver.Database) {
+	for key, obj := range ctx.objects {
+		if key.tab.Database == db {
+			clear(obj.data)
+			obj.loaded = false
+			continue
+		}
+		for name := range obj.data {
+			if attr := key.tab.Attrs[name]; attr != nil && attr.table != nil && attr.table.Database == db {
+				delete(obj.data, name)
+			}
+		}
+	}
 }
 
 func (ctx *Context) txSet(obj *Object) {
@@ -231,7 +267,7 @@ func (ctx *Context) txGet(tab *metaTable, obj *Object) driver.DataObject {
 	if newObject {
 		return nil
 	}
-	row, err := ctx.transaction(tab).Get(tab.Table.Name, obj.id)
+	row, err := ctx.transaction(tab.Database).Get(tab.Table.Name, obj.id)
 	if errors.Is(err, driver.ErrNotFound) {
 		return nil
 	}
@@ -251,7 +287,7 @@ func (ctx *Context) txDelete(obj *Object, exists bool) {
 		return
 	}
 	for _, tab := range obj.tab.storage {
-		check(ctx.transaction(tab).Delete(tab.Table.Name, obj.id))
+		check(ctx.transaction(tab.Database).Delete(tab.Table.Name, obj.id))
 	}
 	if exists {
 		ctx.commitWritten[obj] = true
@@ -261,7 +297,7 @@ func (ctx *Context) txDelete(obj *Object, exists bool) {
 func (ctx *Context) txFetch(tab *metaTable, query *driver.Query, fetcher func(uint64) error) {
 	check(ctx.Err())
 	ctx.flush()
-	tx := ctx.transaction(tab)
+	tx := ctx.transaction(tab.Database)
 	sqlTx, supportsSQL := tx.(driver.SQLTransaction)
 	rawSQL := query.RawSQL
 	if (rawSQL != nil || len(query.SQLFilters) != 0) && !supportsSQL {
@@ -332,10 +368,10 @@ func (ctx *Context) flush() {
 		id := obj.id
 		isNew := id == 0
 		if id == 0 || len(main) > 0 {
-			id = must(ctx.transaction(primary).Set(primary.Table.Name, id, main))
+			id = must(ctx.transaction(primary.Database).Set(primary.Table.Name, id, main))
 		}
 		for tab, values := range others {
-			must(ctx.transaction(tab).Set(tab.Table.Name, id, values))
+			must(ctx.transaction(tab.Database).Set(tab.Table.Name, id, values))
 		}
 		if isNew || len(main) > 0 {
 			obj.setID(id)
@@ -459,82 +495,6 @@ func (ctx *Context) newEnum(enum meta.Enum, typ reflect.Type, id uint64) *EnumIt
 		}
 	}
 	panic(fmt.Errorf("mdd: %s has no item with ID %d", enum.Path(), id))
-}
-
-type staticQueryKey struct {
-	expr string
-	from string
-}
-
-type staticQuery struct {
-	parsed *xquery.Query
-	query  *driver.Query
-}
-
-func (ctx *Context) parseQuery(queryExpr string, defaultFrom string, obj any) *driver.Query {
-	template := must(ctx.schema.queryTemplates.parse(queryExpr))
-	var buf bytes.Buffer
-	check(template.Execute(&buf, obj))
-	resultExpr := buf.String()
-	static := resultExpr == queryExpr
-	key := staticQueryKey{expr: queryExpr, from: defaultFrom}
-	if static {
-		if value, ok := ctx.schema.queries.Load(key); ok {
-			cached := value.(*staticQuery)
-			if cached.query == nil {
-				return ctx.schema.convertQuery(cached.parsed)
-			}
-			return copyCachedQuery(cached.query)
-		}
-	}
-	queryExpr = resultExpr
-	var args xquery.Args
-	if defaultFrom != "" {
-		args = xquery.Args{"from": defaultFrom}
-	}
-	q := must(xquery.Parse(queryExpr, args))
-	if defaultFrom != "" {
-		defaultTable := ctx.schema.tables[defaultFrom]
-		queryTable := ctx.schema.tables[q.From]
-		if queryTable != nil && queryTable != defaultTable {
-			panic(fmt.Errorf("mdd: query source %q does not match %q", q.From, defaultFrom))
-		}
-	}
-	result := ctx.schema.convertQuery(q)
-	if !static {
-		return result
-	}
-	cached := &staticQuery{parsed: q, query: result}
-	for _, filter := range result.Filters {
-		for _, value := range filter.Values {
-			if _, ok := value.(driver.File); ok {
-				// A file reader has mutable state, so recreate it from the parsed query.
-				cached.query = nil
-			}
-		}
-	}
-	actual, _ := ctx.schema.queries.LoadOrStore(key, cached)
-	cached = actual.(*staticQuery)
-	if cached.query == nil {
-		return result
-	}
-	return copyCachedQuery(cached.query)
-}
-
-func copyCachedQuery(query *driver.Query) *driver.Query {
-	result := *query
-	result.Joins = slices.Clone(query.Joins)
-	result.Order = slices.Clone(query.Order)
-	result.Filters = slices.Clone(query.Filters)
-	for i := range result.Filters {
-		result.Filters[i].Values = slices.Clone(query.Filters[i].Values)
-		for j, value := range result.Filters[i].Values {
-			if data, ok := value.([]byte); ok {
-				result.Filters[i].Values[j] = bytes.Clone(data)
-			}
-		}
-	}
-	return &result
 }
 
 // FormValue returns the first value for name from the request's form or URL query.

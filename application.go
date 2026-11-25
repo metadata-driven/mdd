@@ -81,6 +81,9 @@ func (a *Application[C]) Close() (result error) {
 
 func (a *Application[C]) Open(config meta.Config) (err error) {
 	defer func() {
+		if r := recover(); r != nil {
+			err = toError(r)
+		}
 		if err != nil {
 			a.Logger().Printf("mdd: open: %v", err)
 		}

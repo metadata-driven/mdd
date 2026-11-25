@@ -551,6 +551,14 @@ func (t *transaction) Fetch(query *driver.Query, fn func(id uint64) error) (next
 	return strconv.FormatUint(last, 10), nil
 }
 
+// ExecSQL executes a native statement in the current transaction.
+func (t *transaction) ExecSQL(statement string, args ...any) (sql.Result, error) {
+	if strings.TrimSpace(statement) == "" {
+		return nil, errors.New("mysql: SQL statement is required")
+	}
+	return t.dbTx.ExecContext(t.ctx, t.traceSQL(statement), args...)
+}
+
 // FetchSQL streams record IDs from a native read query.
 func (t *transaction) FetchSQL(statement string, args []any, fn func(uint64) error) error {
 	if strings.TrimSpace(statement) == "" || fn == nil {

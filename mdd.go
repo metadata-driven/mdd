@@ -211,7 +211,7 @@ func AttrSet[T any, P interface {
 	if attr.Type().Target.Path() != set.tab.Model.Path() {
 		panic("mdd: set attribute " + attr.Path() + " does not match model " + set.tab.Model.Path())
 	}
-	set.query = ctx.parseQuery(attr.Query(), set.tab.Table.Name, self)
+	set.query = ctx.schema.parseQuery(attr.Query(), set.tab.Table.Name, self)
 	return set
 }
 

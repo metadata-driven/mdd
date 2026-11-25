@@ -1,10 +1,12 @@
 package mdd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"reflect"
+	"slices"
 	"strconv"
 	"sync"
 
@@ -125,6 +127,68 @@ func (s *schema) queryFilter(root *metaTable, query *driver.Query, name, op stri
 		return driver.QueryFilter{Source: source, Column: column, Op: op, Values: castCollectionQueryValues(attr, values)}
 	}
 	return driver.QueryFilter{Source: source, Column: column, Op: op, Values: castQueryValues(attr, values)}
+}
+
+type staticQuery struct {
+	parsed *xquery.Query
+	query  *driver.Query
+}
+
+func (s *schema) parseQuery(queryExpr string, defaultFrom string, obj any) *driver.Query {
+	template := must(s.queryTemplates.parse(queryExpr))
+	var buf bytes.Buffer
+	check(template.Execute(&buf, obj))
+	resultExpr := buf.String()
+	static := resultExpr == queryExpr
+	key := [2]string{queryExpr, defaultFrom}
+	if static {
+		if value, ok := s.queries.Load(key); ok {
+			cached := value.(*staticQuery)
+			if cached.query == nil {
+				return s.convertQuery(cached.parsed)
+			}
+			return copyPtr(cached.query)
+		}
+	}
+	queryExpr = resultExpr
+	var args xquery.Args
+	if defaultFrom != "" {
+		args = xquery.Args{"from": defaultFrom}
+	}
+	q := must(xquery.Parse(queryExpr, args))
+	if defaultFrom != "" {
+		defaultTable := s.tables[defaultFrom]
+		queryTable := s.tables[q.From]
+		if queryTable != nil && queryTable != defaultTable {
+			panic(fmt.Errorf("mdd: query source %q does not match %q", q.From, defaultFrom))
+		}
+	}
+	result := s.convertQuery(q)
+	if !static {
+		return result
+	}
+	cached := &staticQuery{parsed: q, query: result}
+	for _, filter := range result.Filters {
+		for _, value := range filter.Values {
+			if _, ok := value.(driver.File); ok {
+				// A file reader has mutable state, so recreate it from the parsed query.
+				cached.query = nil
+			}
+		}
+	}
+	if cached.query != nil {
+		// Cached elements are read-only. Appending must allocate separate storage.
+		result.Joins = slices.Clip(result.Joins)
+		result.Order = slices.Clip(result.Order)
+		result.Filters = slices.Clip(result.Filters)
+		result.SQLFilters = slices.Clip(result.SQLFilters)
+	}
+	actual, _ := s.queries.LoadOrStore(key, cached)
+	cached = actual.(*staticQuery)
+	if cached.query == nil {
+		return result
+	}
+	return copyPtr(cached.query)
 }
 
 func addQueryJoins(query *driver.Query, joins ...driver.QueryJoin) {

@@ -899,6 +899,15 @@ func (t *transaction) Fetch(q *driver.Query, fn func(uint64) error) (string, err
 	return strconv.FormatUint(last, 10), nil
 }
 
+// ExecSQL executes a native statement in the current transaction.
+func (t *transaction) ExecSQL(statement string, args ...any) (sql.Result, error) {
+	if strings.TrimSpace(statement) == "" {
+		return nil, errors.New("sqlite: SQL statement is required")
+	}
+	result, err := t.tx.ExecContext(t.ctx, statement, args...)
+	return result, lockError(err)
+}
+
 // FetchSQL streams record IDs from a native read query.
 func (t *transaction) FetchSQL(statement string, args []any, fn func(uint64) error) error {
 	if strings.TrimSpace(statement) == "" || fn == nil {

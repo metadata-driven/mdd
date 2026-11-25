@@ -351,7 +351,7 @@ func (o *Object) getValue(attr string) (any, *metaAttribute, *Context) {
 		if value != nil && metaAttr.Type().IsFile() {
 			value = driver.NewFile(value)
 		} else {
-			value = copyPredefinedValue(value)
+			value = cloneDataValue(value)
 		}
 		return value, metaAttr, o.constant
 	}
@@ -385,20 +385,20 @@ func (o *Object) getValue(attr string) (any, *metaAttribute, *Context) {
 	return nil, metaAttr, o.ctx
 }
 
-func copyPredefinedValue(value any) any {
+func cloneDataValue(value any) any {
 	switch v := value.(type) {
 	case []byte:
 		return bytes.Clone(v)
 	case []any:
 		result := make([]any, len(v))
 		for i, item := range v {
-			result[i] = copyPredefinedValue(item)
+			result[i] = cloneDataValue(item)
 		}
 		return result
 	case map[string]any:
 		result := make(map[string]any, len(v))
 		for name, item := range v {
-			result[name] = copyPredefinedValue(item)
+			result[name] = cloneDataValue(item)
 		}
 		return result
 	default:

@@ -26,7 +26,7 @@ models:
 
       - name: login
         type: string(25)
-        index: regular
+        index: unique
 
       - name: name
         type: string

@@ -121,7 +121,8 @@ model is the default `from`, and `{...}` expressions are evaluated against the
 application context. Existing conditions and ordering remain first; specified
 nonzero limits and nonempty offsets replace the previous values. Use `Limit(0)`
 or `Offset("")` to clear them. Queries without `{...}` expressions are cached
-per application schema and source; each set receives its own query values.
+per application schema and source. Sets share cached query elements and keep
+their own query state when adding conditions or changing ordering.
 
 Reference fields such as `user.manager.name` in `Set.Query`, `Filter`, `Where`,
 `Order`, and `FindBy` are resolved through model metadata. A dot always separates
@@ -747,3 +748,19 @@ Drivers implement `driver.SQLTransaction` to support native SQL. Regular
 IDs with the SQL rows open and returns an error. MDD delivers model objects
 after the driver closes the rows so model callbacks can use the same transaction.
 Execution on other drivers fails with `driver.ErrSQLUnsupported`.
+
+Use `ctx.SQLExecute` when you need to run a statement such as an `UPDATE` or
+`DELETE`. The first argument is the metadata source name.
+
+```go
+result := ctx.SQLExecute("main", "UPDATE orders SET amount = ? WHERE id = ?", amount, orderID)
+changed, err := result.RowsAffected()
+```
+
+MySQL and SQLite implement the optional `driver.SQLExecutor` capability.
+The runtime flushes pending model writes, runs the statement in the context's
+transaction for that source, and invalidates cached model values from that source.
+It returns the driver's `sql.Result` and panics on error, like other model
+operations. Supply trusted SQL and pass values as parameters. Direct writes
+bypass model hooks. The database's transaction rules apply, including any
+implicit commits for DDL.

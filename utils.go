@@ -448,6 +448,15 @@ func must[T any](value T, err error) T {
 	return value
 }
 
+// copyPtr returns a pointer to a shallow copy of value, or nil if value is nil.
+func copyPtr[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	result := *value
+	return &result
+}
+
 func safeCall(fn func()) (err error) {
 	defer func() {
 		err = toError(recover())

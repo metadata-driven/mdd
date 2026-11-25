@@ -90,7 +90,7 @@ func enumItemValue(item meta.Item, id uint64, name string) any {
 	case "description", "icon":
 		return item.Raw()[name]
 	default:
-		return copyPredefinedValue(item.Data()[name])
+		return cloneDataValue(item.Data()[name])
 	}
 }
 

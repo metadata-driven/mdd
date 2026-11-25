@@ -154,7 +154,7 @@ func (s *Set[T]) Query(expr string) *Set[T] {
 	if s == nil {
 		return nil
 	}
-	q := s.ctx.parseQuery(expr, s.tab.Table.Name, s.ctx.getSelf())
+	q := s.ctx.schema.parseQuery(expr, s.tab.Table.Name, s.ctx.getSelf())
 	addQueryJoins(s.query, q.Joins...)
 	s.query.Filters = append(s.query.Filters, q.Filters...)
 	s.query.Order = append(s.query.Order, q.Order...)
@@ -312,7 +312,7 @@ func (s *Set[T]) FindOrAdd() *T {
 	object := any(result).(interface{ Set(string, any) })
 	for _, filter := range s.query.Filters {
 		if filter.Source == "" && filter.Column != "id" && (filter.Op == "" || filter.Op == driver.OpEqual) && len(filter.Values) > 0 {
-			object.Set(filter.Column, filter.Values[0])
+			object.Set(filter.Column, cloneDataValue(filter.Values[0]))
 		}
 	}
 	return result

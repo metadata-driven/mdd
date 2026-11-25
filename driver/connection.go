@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	"github.com/goldic/js"
@@ -46,6 +47,7 @@ type Transaction interface {
 
 	// Fetch stops successfully on ErrBreak and returns the offset of the last delivered record.
 	// Other callback errors are returned to the caller.
+	// Treat the query and its values as read-only for the duration of the call.
 	Fetch(*Query, func(id uint64) error) (nextOffset string, err error)
 }
 
@@ -57,6 +59,14 @@ type SQLTransaction interface {
 	// ErrBreak stops iteration successfully. Other callback errors are returned.
 	// The callback runs with the rows open. Use the transaction after FetchSQL returns.
 	FetchSQL(statement string, args []any, fn func(id uint64) error) error
+}
+
+// SQLExecutor is an optional transaction capability for running native SQL.
+type SQLExecutor interface {
+	Transaction
+
+	// ExecSQL executes a statement in the current transaction and returns its result.
+	ExecSQL(statement string, args ...any) (sql.Result, error)
 }
 
 // DataObject maps column names to their values.
