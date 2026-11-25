@@ -270,7 +270,11 @@ true
 1
 ```
 
-`Execute` creates a context and commits on success. A panic in the callback or a transaction hook rolls back the open transactions and is returned as an error. A nil first argument uses `context.Background()`.
+`Execute` creates a context and commits when the callback returns normally.
+It turns panics into errors and rolls back any transactions still open. A nil
+first argument uses `context.Background()`. See
+[Transactions](docs/runtime.md#transactions) for the order of writes, commits,
+and rollbacks.
 
 ## Models and metadata
 

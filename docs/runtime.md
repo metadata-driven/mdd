@@ -56,10 +56,12 @@ canonical set.
 ## Application and context
 
 An application owns its connections. Use `app.Execute` to run work in a typed
-context; the context is created and closed by the application. Objects and sets
-are bound to that context and must not be used after it closes. A
-context and its objects are not intended for concurrent use. Sets are mutable: `Where`, `Filter`, `Order`, `Limit`, and `Offset` update the
-receiver and return it for chaining. `Where(name, op, values...)` adds a
+context. The application manages the context and its
+[transactions](#transactions). Objects and sets are bound to that context and
+must not be used after it closes. A context and its objects are not intended
+for concurrent use. Sets are mutable. `Where`, `Filter`, `Order`, `Limit`, and
+`Offset` update the receiver and return it for chaining.
+`Where(name, op, values...)` adds a
 condition; `Filter(name, values...)` adds an equality condition. Multiple
 conditions are combined with AND. For equality, multiple values are
 alternatives; for inequality, the value must differ from all supplied values.
@@ -435,17 +437,15 @@ with `mdd.Attr[*mdd.Object]`; its target model is identified by the attribute's
 metadata. `NewSet[T]` still requires a registered model type.
 
 `mdd.SetAttr` updates an attribute and returns the same model, so typed model
-setters can be chained. Each object keeps its pending changes, while the context
-tracks the one object awaiting a flush, including attributes stored in different
-sources. It flushes those changes when changing another object, reading an
-uncached and unbuffered attribute, requesting an ID for a new object, executing
-a query, or committing. Cached reads do not flush. Reading an attribute of a new
-object without an ID returns nil when the attribute has not been set. Reading a
-buffered file attribute of a saved object flushes it before returning a reader.
-Rollback discards pending changes. Before a flush, non-file changes are merged
-into the object's cache; only the changed fields are sent to the driver. File
-changes are read back from the driver. The cache retains the values sent to the
-driver until commit or rollback, including when the database transforms them.
+setters can be chained. See [Transactions](#transactions) for when setters
+write to storage. Reading an attribute of a new object without an ID returns
+nil when the attribute has not been set. Reading a buffered file attribute of
+a saved object flushes it before returning a reader.
+
+During a flush, pending non-file changes are merged into the object's cache.
+File changes are read back from the driver. The cache retains the values sent
+to the driver until commit or rollback, including when the database transforms
+them.
 Errors from a buffered write panic when it is flushed. File attributes accept
 an `io.Reader`, `[]byte`, or string; binary attributes accept `[]byte` or string.
 A nil model returns nil without writing.
@@ -527,8 +527,7 @@ Panics are collected while remaining callbacks continue;
 Wrapped errors can be inspected with `errors.Is` and `errors.As`. The transaction
 has already committed and cannot be rolled back. When `Commit` is called
 explicitly, it panics with that error. Callbacks are not guaranteed to run if
-the process stops after commit. Different database connections do not share an
-atomic commit; a partial commit failure does not run these callbacks.
+the process stops after commit.
 
 `Set.Delete()` selects IDs using the current filters, ordering, limit and offset,
 then deletes the selected objects individually. References are not cascaded.
@@ -647,12 +646,10 @@ The example uses memory storage, so its data lasts only for the life of the
 application. Its configuration is a runnable subset of the larger metadata
 example in `meta/testdata/config.yaml`.
 
-A context opens each source lazily and keeps its own transaction for that
-source. Commits across sources are sequential and are not atomic: an error can
-leave earlier sources committed. Predefined items are initialized per source;
-the file driver is excluded because its commits are not atomic. Driver `Set` creates a record with the specified ID when
-needed and updates only
-the supplied fields, including for secondary sources.
+Predefined items are initialized per source; the file driver is excluded
+because its commits are not atomic. Driver `Set` creates a record with the
+specified ID when needed and updates only the supplied fields, including for
+secondary sources.
 
 `Set.Page` returns the driver's continuation offset. MySQL's driver supports
 continuation only when ordering by ID; the runtime rejects other MySQL ordering
@@ -668,6 +665,43 @@ items when using persistent storage.
 
 `Object.Get` reads the driver row, including binary byte slices. Files are
 returned as lazy readers.
+
+## Transactions
+
+A context opens a separate driver transaction for each metadata source on
+first use. `Object.Set` and typed model setters buffer changes for one object
+at a time. Several calls on the same object can accumulate changes for the
+same flush, even when the attributes are stored in different sources.
+
+The context flushes pending changes before adding or changing another object,
+reading an attribute that requires a storage read, or executing a query.
+Allocating a new object's ID and committing also trigger a flush. Reads served
+from the cache or from pending non-file values leave the buffer in place.
+
+During a flush, MDD sends the changed fields together to each affected
+source. For SQL sources, this is when the driver executes the `INSERT` or
+`UPDATE` within its open transaction. Those writes remain subject to rollback
+until the transaction commits.
+
+When the callback returns normally, MDD commits in this order.
+
+1. Run the context's `OnCommit` and flush pending writes. Run model
+   `OnCommit` hooks, flushing additional changes after each hook.
+2. Call `Commit` on each open driver transaction, one source at a time.
+   The order of sources is unspecified.
+3. Run model `OnAfterCommit` hooks once all driver commits succeed.
+
+MySQL with InnoDB and SQLite report a `UNIQUE` index violation during the
+`INSERT` or `UPDATE`. MDD panics on that error during the flush, before any
+driver commit. If the panic reaches `app.Execute`, it rolls back the open
+transactions and returns the error.
+
+If a driver commit fails, any earlier source commits stay in effect.
+Rollback can discard only the uncommitted work.
+
+An explicit `ctx.Commit()` uses the same sequence and panics on error. If
+you recover a write or commit panic inside the callback, use `ctx.Rollback()`
+to discard pending writes and roll back transactions that are still open.
 
 ## Native SQL queries
 
