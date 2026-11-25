@@ -94,13 +94,9 @@ func enumItemValue(item meta.Item, id uint64, name string) any {
 	}
 }
 
-func predefinedEnumItem(enum meta.Enum, typ reflect.Type, item meta.Item) *EnumItem {
-	id := storedScalar[uint64](item.ItemID(), item.Path())
+func (s *schema) newPredefinedEnumItem(typ reflect.Type, item meta.Item, id uint64) meta.ModelObject {
 	if id == 0 {
 		panic(fmt.Errorf("mdd: %s has an invalid zero ID", item.Path()))
-	}
-	if value := enum.Predefined(id); value != nil {
-		return value.(interface{ enumItemCore() *EnumItem }).enumItemCore()
 	}
 	value := reflect.New(typ).Interface()
 	model, ok := value.(meta.ModelObject)
@@ -116,7 +112,13 @@ func predefinedEnumItem(enum meta.Enum, typ reflect.Type, item meta.Item) *EnumI
 		panic(fmt.Errorf("mdd: enum type %v has an invalid MDD object", typ))
 	}
 	obj.object.self, obj.object.id, obj.object.loaded = value, id, true
-	obj.object.constant = &Context{constant: true}
+	obj.object.ctx = s.ctx
 	obj.object.item = item
-	return enum.CachePredefined(id, model).(interface{ enumItemCore() *EnumItem }).enumItemCore()
+	return model
+}
+
+func (s *schema) predefinedEnum(enum meta.Enum, typ reflect.Type, item meta.Item, id uint64) meta.ModelObject {
+	return s.getOrCreatePredefined(enum, id, func() meta.ModelObject {
+		return s.newPredefinedEnumItem(typ, item, id)
+	})
 }

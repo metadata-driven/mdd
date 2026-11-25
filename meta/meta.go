@@ -2,7 +2,6 @@ package meta
 
 import (
 	"reflect"
-	"time"
 
 	"github.com/goldic/js"
 )
@@ -77,19 +76,14 @@ type Model interface {
 
 	// Register must not run concurrently with Register or ModelType on this model.
 	Register(ModelObject) struct{}
-	// Predefined returns the cached runtime object for an item ID, if present.
-	Predefined(id uint64) ModelObject
-	// CachePredefined stores an object or returns the object already cached for the ID.
-	CachePredefined(id uint64, obj ModelObject) ModelObject
 	Domains() []Domain
 	Attrs() []Attribute
 	Groups() []Group
 	Items() []Item
 	Indexes() []Index
 	Source() Source
+	// ID returns the generated identifier attribute if the model has a set.
 	ID() Attribute
-	Cache() Source
-	CacheTTL() time.Duration
 }
 
 // ModelObject identifies a Go model that exposes its MDD object.
@@ -124,8 +118,6 @@ type Group interface {
 type Enum interface {
 	Attribute
 	EnumType() reflect.Type
-	Predefined(id uint64) ModelObject
-	CachePredefined(id uint64, obj ModelObject) ModelObject
 	Items() []Item
 }
 

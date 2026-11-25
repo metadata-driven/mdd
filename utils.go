@@ -295,7 +295,7 @@ func convertAttribute(value any, attr *metaAttribute, ctx *Context, target refle
 			if id == 0 {
 				return reflect.Zero(element)
 			}
-			return reflect.ValueOf(ctx.newEnum(enum, element, id).object.self)
+			return reflect.ValueOf(ctx.enumItem(enum, id))
 		}
 	}
 	if !info.Collection {

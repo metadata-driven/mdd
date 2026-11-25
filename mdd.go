@@ -46,14 +46,30 @@ func RegisterModel[T any](cfg meta.Config, name string) struct{} {
 	if !ok {
 		panic(fmt.Errorf("mdd: model type %v must implement MDDObject", reflect.TypeFor[T]()))
 	}
-	return cfg.ModelByName(name).Register(model)
+	return schemaByConfig(cfg).registerModel(cfg.ModelByName(name), model)
 }
 
-// RegisterEnum associates a Go enum with metadata in cfg and panics on error.
+func (s *schema) registerModel(model meta.Model, obj meta.ModelObject) struct{} {
+	if s.tablesByType != nil {
+		if typ := model.ModelType(); typ != nil && reflect.PointerTo(typ) == reflect.TypeOf(obj) {
+			return struct{}{}
+		}
+		panic(fmt.Errorf("mdd: register model %q before opening the configuration", model.Path()))
+	}
+	return model.Register(obj)
+}
+
+// RegisterEnum associates a Go enum with metadata in cfg before opening it.
 func RegisterEnum[T any](cfg meta.Config, path string) struct{} {
 	typ := reflect.TypeFor[T]()
 	if typ.Kind() != reflect.Struct || !reflect.PointerTo(typ).Implements(reflect.TypeFor[interface{ enumItemCore() *EnumItem }]()) {
 		panic(fmt.Errorf("mdd: enum type %v must embed mdd.EnumItem", typ))
+	}
+	if s := schemaByConfig(cfg); s.tablesByType != nil {
+		if enum := cfg.EnumByType(typ); enum != nil && enum.Path() == path {
+			return struct{}{}
+		}
+		panic(fmt.Errorf("mdd: register enum %q before opening the configuration", path))
 	}
 	check(cfg.RegisterEnum(path, typ))
 	return struct{}{}
@@ -105,6 +121,8 @@ func Item[T any](cfg meta.Config, path string) *T {
 	if typ.Kind() != reflect.Struct {
 		panic(fmt.Errorf("mdd: invalid model type %v", typ))
 	}
+	id := storedScalar[uint64](item.ItemID(), item.Path())
+	s := schemaByConfig(cfg)
 	if node.Parent().Kind() == meta.KindEnum {
 		enum := node.Parent().(meta.Enum)
 		if existing := enum.EnumType(); existing == nil {
@@ -112,7 +130,7 @@ func Item[T any](cfg meta.Config, path string) *T {
 		} else if existing != typ {
 			panic(fmt.Errorf("mdd: %s is registered as %v, not %v", enum.Path(), existing, typ))
 		}
-		return predefinedEnumItem(enum, typ, item).object.self.(*T)
+		return any(s.predefinedEnum(enum, typ, item, id)).(*T)
 	}
 	if node.Parent().Kind() != meta.KindModel {
 		panic(fmt.Errorf("mdd: %q is not a model or enum item", path))
@@ -123,23 +141,11 @@ func Item[T any](cfg meta.Config, path string) *T {
 		if !ok {
 			panic(fmt.Errorf("mdd: model type %v does not expose an MDD object", typ))
 		}
-		model.Register(candidate)
+		s.registerModel(model, candidate)
 	} else if existing != typ {
 		panic(fmt.Errorf("mdd: %s is registered as %v, not %v", model.Path(), existing, typ))
 	}
-	id := storedScalar[uint64](item.ItemID(), item.Path())
-	if obj := model.Predefined(id); obj != nil {
-		return any(obj).(*T)
-	}
-	s := must(convertSchema(cfg))
-	s.textTemplates.parser = TemplateEngine.Text
-	s.queryTemplates.parser = TemplateEngine.Query
-	check(s.warmTemplates(cfg))
-	tab := s.tables[model.Path()]
-	if tab == nil || tab.predefined[id] == nil {
-		panic(fmt.Errorf("mdd: invalid predefined item %s", path))
-	}
-	return predefinedObject(s, tab, item).self.(*T)
+	return any(s.predefinedModel(model, item, id)).(*T)
 }
 
 // ID returns the model ID, or zero for a nil model.

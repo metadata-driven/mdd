@@ -91,7 +91,7 @@ func TestParseYAMLTypesAndReferences(t *testing.T) {
 		{path: "user.previous_type", expression: "user.type", target: "user.type", storage: "types.string", reference: true},
 		{path: "user.permissions", expression: "user.permissions[]", target: "user.permissions", storage: "types.string", collection: true, reference: true},
 		{path: "user.orders", expression: "set<order>", target: "order", set: true, reference: true},
-		{path: "session.host", expression: "host", target: "host", storage: "types.string", reference: true, length: 64},
+		{path: "session.host", expression: "host", target: "host", storage: "types.id", reference: true},
 		{path: "order.amount", expression: "number(12,2)", target: "types.number", storage: "types.number", precision: 12, scale: 2},
 		{path: "user.avatar", expression: "file", target: "types.file", storage: "types.file"},
 		{path: "session.payload", expression: "binary", target: "types.binary", storage: "types.binary"},
@@ -116,14 +116,11 @@ func TestParseYAMLTypesAndReferences(t *testing.T) {
 		})
 	}
 
-	for _, name := range []string{"user", "session", "order"} {
+	for _, name := range []string{"user", "session", "order", "host"} {
 		model := lookupNode(t, cfg, name)
 		assertNode(t, model.ID(), KindAttr, "id", name+".id")
 		assertSameNode(t, model.ID().Type().Target, cfg.Lookup("types.id"))
 	}
-	host := lookupNode(t, cfg, "host")
-	assertSameNode(t, host.ID(), host.Attrs()[0])
-	assertEqual(t, host.ID().Type().Expr, "string(64)")
 
 	userType := lookupNodeKind(t, cfg, "user.type", KindEnum)
 	assertNames(t, userType.Items(), "admin", "user", "guest")
@@ -245,8 +242,6 @@ models:
   - name: person
     set: people
     attrs:
-      - name: id
-        type: string(32)
       - name: last_note
         type: note
   - name: summary
@@ -263,11 +258,11 @@ models:
 	assertEqual(t, lookupNode(t, cfg, "note.body").Type().Expr, "string")
 	assertEqual(t, lookupNode(t, cfg, "note.body").Type().Length, 0)
 	assertSameNode(t, lookupNode(t, cfg, "note.owner").Type().Target, cfg.Lookup("person"))
-	assertEqual(t, lookupNode(t, cfg, "note.owner").Type().Length, 32)
+	assertEqual(t, lookupNode(t, cfg, "note.owner").Type().Primitive.Name(), TypeID)
 	assertSameNode(t, lookupNode(t, cfg, "note.peers").Type().Target, note)
 	assertSameNode(t, lookupNode(t, cfg, "person.last_note").Type().Target, note)
 	assertEqual(t, lookupNode(t, cfg, "person.last_note").Type().Primitive.Name(), TypeID)
-	assertNames(t, lookupNode(t, cfg, "person").Attrs(), "id", "last_note")
+	assertNames(t, lookupNode(t, cfg, "person").Attrs(), "last_note", "id")
 	require(t, lookupNode(t, cfg, "summary").ID() == nil, "a model without a set must not receive an implicit ID")
 	assertEqual(t, lookupNode(t, cfg, "summary.amount").Type().Precision, 0)
 	assertEqual(t, lookupNode(t, cfg, "summary.amount").Type().Scale, 0)

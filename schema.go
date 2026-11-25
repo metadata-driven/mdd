@@ -19,12 +19,66 @@ import (
 type schema struct {
 	config         meta.Config
 	databases      []*driver.Database
+	databaseByName map[string]*driver.Database
 	items          []schemaItem
+	itemIDs        map[string]uint64
 	tables         map[string]*metaTable
+	tablesBySet    map[[2]string]*metaTable // Keyed by set name and source name.
 	tablesByType   map[reflect.Type]*metaTable
+	ctx            *Context
+	predefined     map[predefinedKey]meta.ModelObject
 	queries        sync.Map
-	textTemplates  templateCache
-	queryTemplates templateCache
+	queryTemplates *templateCache
+}
+
+type predefinedKey struct {
+	owner meta.Node
+	id    uint64
+}
+
+// Configurations are registered and prepared during startup.
+var schemas = make(map[meta.Config]*schema)
+
+func schemaByConfig(config meta.Config) *schema {
+	if s := schemas[config]; s != nil {
+		return s
+	}
+	s := &schema{config: config, predefined: make(map[predefinedKey]meta.ModelObject)}
+	s.ctx = &Context{schema: s, constant: true}
+	schemas[config] = s
+	return s
+}
+
+func (s *schema) prepare() error {
+	if s.tablesByType != nil {
+		return nil
+	}
+	if err := s.convert(); err != nil {
+		return fmt.Errorf("convert metadata: %w", err)
+	}
+	tablesByType := make(map[reflect.Type]*metaTable)
+	for _, model := range s.config.Models() {
+		table := s.tables[model.Name()]
+		typ := model.ModelType()
+		table.Type = typ
+		if typ == nil {
+			continue
+		}
+		if _, err := newModelObject(typ); err != nil {
+			return fmt.Errorf("schema: model %s: %w", model.Path(), err)
+		}
+		if _, exists := tablesByType[typ]; exists {
+			tablesByType[typ] = nil
+		} else {
+			tablesByType[typ] = table
+		}
+	}
+	if err := s.warmTemplates(); err != nil {
+		return err
+	}
+	s.preparePredefined()
+	s.tablesByType = tablesByType
+	return nil
 }
 
 func (s *schema) metaTableByType(typ reflect.Type) *metaTable {
@@ -36,6 +90,76 @@ func (s *schema) metaTableByType(typ reflect.Type) *metaTable {
 		panic(fmt.Errorf("mdd: multiple models registered for type %v", typ))
 	}
 	return tab
+}
+
+func (s *schema) getOrCreatePredefined(owner meta.Node, id uint64, create func() meta.ModelObject) meta.ModelObject {
+	key := predefinedKey{owner, id}
+	if obj := s.predefined[key]; obj != nil {
+		return obj
+	}
+	if s.tablesByType != nil {
+		panic(fmt.Errorf("mdd: %s-%d is not a predefined object", owner.Path(), id))
+	}
+	obj := create()
+	s.predefined[key] = obj
+	return obj
+}
+
+func (s *schema) predefinedModel(model meta.Model, item meta.Item, id uint64) meta.ModelObject {
+	return s.getOrCreatePredefined(model, id, func() meta.ModelObject {
+		obj := must(newModelObject(model.ModelType()))
+		obj.item, obj.id, obj.ctx = item, id, s.ctx
+		return obj.self.(meta.ModelObject)
+	})
+}
+
+func (s *schema) preparePredefined() {
+	rows := make(map[predefinedKey]driver.DataObject)
+	for _, row := range s.items {
+		key := predefinedKey{row.model, row.id}
+		data := rows[key]
+		if data == nil {
+			data = make(driver.DataObject)
+			rows[key] = data
+		}
+		tab := s.tables[row.model.Name()]
+		for name, value := range row.values {
+			attr := tab.Attrs[name]
+			if attr.Type().IsFile() {
+				data[name] = value
+			} else {
+				data[name] = driver.Cast(value, attr.column.Type, false)
+			}
+		}
+	}
+	for _, model := range s.config.Models() {
+		for _, item := range model.Items() {
+			id := storedScalar[uint64](item.ItemID(), item.Path())
+			s.predefinedModel(model, item, id)
+		}
+		for _, attr := range model.Attrs() {
+			if attr.Kind() != meta.KindEnum {
+				continue
+			}
+			enum := attr.(meta.Enum)
+			if typ := enum.EnumType(); typ != nil {
+				for _, item := range enum.Items() {
+					id := storedScalar[uint64](item.ItemID(), item.Path())
+					s.predefinedEnum(enum, typ, item, id)
+				}
+			}
+		}
+	}
+	for key, data := range rows {
+		tab := s.tables[key.owner.Name()]
+		for name, attr := range tab.Attrs {
+			if _, ok := data[name]; !ok && attr.column != nil {
+				data[name] = driver.Cast(nil, attr.column.Type, false)
+			}
+		}
+		obj := s.predefined[key].MDDObject().(*Object)
+		obj.tab, obj.data, obj.loaded = tab, data, true
+	}
 }
 
 func (s *schema) convertQuery(q *xquery.Query) *driver.Query {
@@ -296,7 +420,7 @@ func castCollectionQueryValues(attr *metaAttribute, values []any) []any {
 }
 
 // metaTable maps a model or one of its attributes to its storage table.
-// Name is the model name. Type is populated when a model type lookup is supplied.
+// Name is the model name.
 // Database and Table may be nil when the model has no corresponding storage.
 // Attrs maps attribute names to their metadata and primary source tables.
 type metaTable struct {
@@ -314,7 +438,6 @@ type metaTable struct {
 	title       Template
 	description Template
 	icon        Template
-	predefined  map[uint64]meta.Item
 }
 
 type metaAttribute struct {
@@ -325,7 +448,7 @@ type metaAttribute struct {
 
 func (table *metaTable) hasAttr(name string, typ driver.DataType) bool {
 	attr := table.Attrs[name]
-	return attr != nil && attr.column != nil && attr.column.Type == typ && !attr.Type().IsReference()
+	return attr != nil && attr.column != nil && attr.column.Type == typ //&& !attr.Type().IsReference()
 }
 
 func (a *metaAttribute) storageTable() *metaTable {
@@ -342,12 +465,13 @@ type schemaItem struct {
 	table  *driver.Table
 	id     uint64
 	values driver.DataObject
-	path   string
+	model  meta.Model
 }
 
-func convertSchema(cfg meta.Config) (result *schema, err error) {
+func (s *schema) convert() (err error) {
+	cfg := s.config
 	if cfg == nil {
-		return nil, fmt.Errorf("schema: config is nil")
+		return fmt.Errorf("schema: config is nil")
 	}
 	// Metadata implementations can report invalid relationships through a panic.
 	defer func() {
@@ -357,67 +481,52 @@ func convertSchema(cfg meta.Config) (result *schema, err error) {
 			} else {
 				err = fmt.Errorf("schema: %v", v)
 			}
-			result = nil
 		}
 	}()
-	c := &converter{
-		result: &schema{
-			config:       cfg,
-			tables:       map[string]*metaTable{},
-			tablesByType: map[reflect.Type]*metaTable{},
-		},
-		databases: map[string]*driver.Database{},
-		tables:    map[string]map[string]*driver.Table{},
-		itemIDs:   map[string]uint64{},
-	}
-	c.owners = map[string]map[string]string{}
+	// Rebuild the storage metadata if an earlier prepare attempt failed.
+	s.databases = nil
+	s.databaseByName = make(map[string]*driver.Database)
+	s.items = nil
+	s.itemIDs = make(map[string]uint64)
+	s.tables = make(map[string]*metaTable)
+	s.tablesBySet = make(map[[2]string]*metaTable)
 	for _, source := range cfg.Sources() {
 		if source == nil || source.Name() == "" {
-			return nil, fmt.Errorf("schema: invalid source")
+			return fmt.Errorf("schema: invalid source")
 		}
-		if c.databases[source.Name()] != nil {
-			return nil, fmt.Errorf("schema: duplicate source %q", source.Name())
+		if s.databaseByName[source.Name()] != nil {
+			return fmt.Errorf("schema: duplicate source %q", source.Name())
 		}
 		db := &driver.Database{Name: source.Name(), Connection: source.Conn(), Options: copyOptions(source.Options())}
-		c.result.databases = append(c.result.databases, db)
-		c.databases[source.Name()] = db
-		c.tables[source.Name()] = map[string]*driver.Table{}
-		c.owners[source.Name()] = map[string]string{}
+		s.databases = append(s.databases, db)
+		s.databaseByName[db.Name] = db
 	}
 	// Collect normalized item IDs before resolving references to predefined items.
 	for _, model := range cfg.Models() {
-		if e := c.allocate(model.Items()); e != nil {
-			return nil, e
+		if err := s.indexItemIDs(model.Items()); err != nil {
+			return err
 		}
 		for _, attr := range model.Attrs() {
 			if attr.Kind() == meta.KindEnum {
-				if e := c.allocate(attr.(meta.Enum).Items()); e != nil {
-					return nil, e
+				if err := s.indexItemIDs(attr.(meta.Enum).Items()); err != nil {
+					return err
 				}
 			}
 		}
 	}
 	for _, model := range cfg.Models() {
-		if e := c.convertModel(model); e != nil {
-			return nil, e
+		if err := s.convertModel(model); err != nil {
+			return err
 		}
 	}
-	for _, database := range c.result.databases {
+	for _, database := range s.databases {
 		database.TableByName("")
 		for _, table := range database.Tables {
 			table.ColumnByName("")
 			table.IndexByName("")
 		}
 	}
-	return c.result, nil
-}
-
-type converter struct {
-	result    *schema
-	databases map[string]*driver.Database
-	tables    map[string]map[string]*driver.Table
-	itemIDs   map[string]uint64
-	owners    map[string]map[string]string
+	return nil
 }
 
 func copyOptions(in map[string]any) driver.Options {
@@ -429,7 +538,7 @@ func copyOptions(in map[string]any) driver.Options {
 	return out
 }
 
-func (c *converter) allocate(items []meta.Item) error {
+func (s *schema) indexItemIDs(items []meta.Item) error {
 	seen := map[uint64]string{}
 	for _, item := range items {
 		v := item.ItemID()
@@ -444,30 +553,9 @@ func (c *converter) allocate(items []meta.Item) error {
 			return fmt.Errorf("schema: %s and %s have duplicate id %d", prior, item.Path(), id)
 		}
 		seen[id] = item.Path()
-		c.itemIDs[item.Path()] = id
+		s.itemIDs[item.Path()] = id
 	}
 	return nil
-}
-
-func (c *converter) ensureTable(source meta.Source, name string, owner string) (*driver.Table, error) {
-	if source == nil {
-		return nil, fmt.Errorf("schema: %s has no source", owner)
-	}
-	db := c.databases[source.Name()]
-	if db == nil {
-		return nil, fmt.Errorf("schema: %s has unknown source %q", owner, source.Name())
-	}
-	t := c.tables[source.Name()][name]
-	if t != nil && c.owners[source.Name()][name] != owner {
-		return nil, fmt.Errorf("schema: %s and %s use table %q in source %q", owner, c.owners[source.Name()][name], name, source.Name())
-	}
-	if t == nil {
-		t = &driver.Table{Name: name}
-		c.tables[source.Name()][name] = t
-		c.owners[source.Name()][name] = owner
-		db.Tables = append(db.Tables, t)
-	}
-	return t, nil
 }
 
 func column(attr meta.Attribute) (*driver.Column, error) {
@@ -513,43 +601,21 @@ func column(attr meta.Attribute) (*driver.Column, error) {
 	return col, nil
 }
 
-func (c *converter) convertModel(model meta.Model) error {
-	typ := model.ModelType()
-	if typ != nil {
-		if _, err := newModelObject(typ); err != nil {
-			return fmt.Errorf("schema: model %s: %w", model.Path(), err)
-		}
-	}
-	bySource := make(map[string]*metaTable)
+func (s *schema) convertModel(model meta.Model) error {
 	newTable := func(source meta.Source) *metaTable {
-		tab := &metaTable{Name: model.Name(), Model: model, Source: source, Type: typ}
+		tab := &metaTable{Name: model.Name(), Model: model, Source: source}
 		if source != nil {
 			tab.SourceName = source.Name()
-			tab.Database = c.databases[tab.SourceName]
-			bySource[tab.SourceName] = tab
+			tab.Database = s.databaseByName[tab.SourceName]
 		}
 		return tab
 	}
 	tab := newTable(model.Source())
-	for _, item := range model.Items() {
-		if tab.predefined == nil {
-			tab.predefined = make(map[uint64]meta.Item)
-		}
-		tab.predefined[c.itemIDs[item.Path()]] = item
-	}
 	tab.Attrs = make(map[string]*metaAttribute, len(model.Attrs()))
 	for _, attr := range model.Attrs() {
 		tab.Attrs[attr.Name()] = &metaAttribute{Attribute: attr}
 	}
-	c.result.tables[model.Name()] = tab
-	if typ != nil {
-		if _, exists := c.result.tablesByType[typ]; exists {
-			// A nil entry marks a type registered for multiple models.
-			c.result.tablesByType[typ] = nil
-		} else {
-			c.result.tablesByType[typ] = tab
-		}
-	}
+	s.tables[model.Name()] = tab
 
 	setName := model.SetName()
 	if setName == "" {
@@ -558,38 +624,58 @@ func (c *converter) convertModel(model meta.Model) error {
 		}
 		return nil
 	}
-	c.result.tables[setName] = tab
+	s.tables[setName] = tab
+
+	owner := model.Path()
+	ensureTable := func(source meta.Source) (*metaTable, error) {
+		if source == nil {
+			return nil, fmt.Errorf("schema: %s has no source", owner)
+		}
+		name := source.Name()
+		db := s.databaseByName[name]
+		if db == nil {
+			return nil, fmt.Errorf("schema: %s has unknown source %q", owner, name)
+		}
+		key := [2]string{setName, name}
+		if storage := s.tablesBySet[key]; storage != nil {
+			if other := storage.Model.Path(); other != owner {
+				return nil, fmt.Errorf("schema: %s and %s use table %q in source %q", owner, other, setName, name)
+			}
+			return storage, nil
+		}
+		storage := tab
+		if name != tab.SourceName {
+			storage = newTable(source)
+		}
+		storage.Table = &driver.Table{Name: setName}
+		db.Tables = append(db.Tables, storage.Table)
+		s.tablesBySet[key] = storage
+		return storage, nil
+	}
 
 	id := model.ID()
 	if id == nil || id.Type().PrimitiveTypeName() != meta.TypeID {
 		return fmt.Errorf("schema: %s requires a uint64 id", model.Path())
 	}
 	if model.Source() != nil {
-		table, err := c.ensureTable(model.Source(), setName, model.Path())
-		if err != nil {
+		if _, err := ensureTable(model.Source()); err != nil {
 			return err
 		}
-		tab.Table = table
 	}
 	for _, attr := range model.Attrs() {
 		if attr.Name() == "id" || attr.Type().Set {
 			continue
 		}
-		table, err := c.ensureTable(attr.Source(), setName, model.Path())
+		storage, err := ensureTable(attr.Source())
 		if err != nil {
 			return err
 		}
-		attrTable := bySource[attr.Source().Name()]
-		if attrTable == nil {
-			attrTable = newTable(attr.Source())
-		}
-		attrTable.Table = table
-		tab.Attrs[attr.Name()].table = attrTable
+		tab.Attrs[attr.Name()].table = storage
 		col, err := column(attr)
 		if err != nil {
 			return err
 		}
-		table.Columns = append(table.Columns, col)
+		storage.Table.Columns = append(storage.Table.Columns, col)
 		tab.Attrs[attr.Name()].column = col
 	}
 	if attr := tab.Attrs["created"]; attr != nil && attr.column != nil && attr.column.Type == driver.TypeDatetime {
@@ -611,10 +697,11 @@ func (c *converter) convertModel(model meta.Model) error {
 		default:
 			return fmt.Errorf("schema: %s has unsupported index type %q", idx.Path(), kind)
 		}
-		table, err := c.ensureTable(idx.Source(), setName, model.Path())
+		storage, err := ensureTable(idx.Source())
 		if err != nil {
 			return err
 		}
+		table := storage.Table
 		var names []string
 		for _, attr := range idx.Attrs() {
 			name := attr.Name()
@@ -629,13 +716,8 @@ func (c *converter) convertModel(model meta.Model) error {
 		table.Indexes = append(table.Indexes, &driver.Index{Name: idx.Name(), Type: indexType, Columns: names, Options: copyOptions(idx.Options())})
 	}
 	if source := id.Source(); source != nil {
-		if table := c.tables[source.Name()][setName]; table != nil && c.owners[source.Name()][setName] == model.Path() {
-			idTable := bySource[source.Name()]
-			if idTable == nil {
-				idTable = newTable(source)
-			}
-			idTable.Table = table
-			tab.Attrs[id.Name()].table = idTable
+		if storage := s.tablesBySet[[2]string{setName, source.Name()}]; storage != nil && storage.Model.Path() == owner {
+			tab.Attrs[id.Name()].table = storage
 		}
 	}
 	tab.storage = []*metaTable{tab}
@@ -649,9 +731,10 @@ func (c *converter) convertModel(model meta.Model) error {
 	}
 	for _, item := range model.Items() {
 		rows := map[string]driver.DataObject{}
-		for source, tables := range c.tables {
-			if tables[setName] != nil && c.owners[source][setName] == model.Path() {
-				rows[source] = driver.DataObject{}
+		for _, db := range s.databases {
+			storage := s.tablesBySet[[2]string{setName, db.Name}]
+			if storage != nil && storage.Model.Path() == owner {
+				rows[db.Name] = driver.DataObject{}
 			}
 		}
 		if len(rows) == 0 {
@@ -662,30 +745,31 @@ func (c *converter) convertModel(model meta.Model) error {
 			if attr == nil || attr.Type().Set {
 				return fmt.Errorf("schema: %s has invalid field %q", item.Path(), key)
 			}
-			val, err := c.itemValue(attr, val)
+			val, err := s.itemValue(attr, val)
 			if err != nil {
 				return err
 			}
-			for source, tables := range c.tables {
-				table := tables[setName]
-				if table != nil && columnByName(table, key) != nil {
-					if rows[source] == nil {
-						rows[source] = driver.DataObject{}
+			for _, db := range s.databases {
+				storage := s.tablesBySet[[2]string{setName, db.Name}]
+				if storage != nil && columnByName(storage.Table, key) != nil {
+					if rows[db.Name] == nil {
+						rows[db.Name] = driver.DataObject{}
 					}
-					rows[source][key] = val
+					rows[db.Name][key] = val
 				}
 			}
 		}
-		for _, db := range c.result.databases {
+		for _, db := range s.databases {
 			if values, ok := rows[db.Name]; ok {
-				c.result.items = append(c.result.items, schemaItem{source: db.Name, table: c.tables[db.Name][setName], id: c.itemIDs[item.Path()], values: values, path: item.Path()})
+				table := s.tablesBySet[[2]string{setName, db.Name}].Table
+				s.items = append(s.items, schemaItem{source: db.Name, table: table, id: s.itemIDs[item.Path()], values: values, model: model})
 			}
 		}
 	}
 	return nil
 }
 
-func (c *converter) itemValue(attr meta.Attribute, v any) (any, error) {
+func (s *schema) itemValue(attr meta.Attribute, v any) (any, error) {
 	if v == nil {
 		return nil, nil
 	}
@@ -697,7 +781,7 @@ func (c *converter) itemValue(attr meta.Attribute, v any) (any, error) {
 		}
 		out := make([]any, rv.Len())
 		for i := range out {
-			value, err := c.singleValue(info, rv.Index(i).Interface())
+			value, err := s.itemScalarValue(info, rv.Index(i).Interface())
 			if err != nil {
 				return nil, fmt.Errorf("schema: %s: %w", attr.Path(), err)
 			}
@@ -710,14 +794,14 @@ func (c *converter) itemValue(attr meta.Attribute, v any) (any, error) {
 		}
 		return out, nil
 	}
-	value, err := c.singleValue(info, v)
+	value, err := s.itemScalarValue(info, v)
 	if err != nil {
 		return nil, fmt.Errorf("schema: %s: %w", attr.Path(), err)
 	}
 	return value, nil
 }
 
-func (c *converter) singleValue(info meta.TypeInfo, v any) (any, error) {
+func (s *schema) itemScalarValue(info meta.TypeInfo, v any) (any, error) {
 	if v == nil || info.Target == nil {
 		return v, nil
 	}
@@ -729,13 +813,13 @@ func (c *converter) singleValue(info meta.TypeInfo, v any) (any, error) {
 		}
 		for _, item := range info.Target.(meta.Enum).Items() {
 			if name == item.Name() || name == item.Path() {
-				return c.itemIDs[item.Path()], nil
+				return s.itemIDs[item.Path()], nil
 			}
 		}
 		return nil, fmt.Errorf("unknown enum value %q", name)
 	case meta.KindModel:
 		if name, ok := v.(string); ok {
-			if id, exists := c.itemIDs[name]; exists {
+			if id, exists := s.itemIDs[name]; exists {
 				return id, nil
 			}
 		}

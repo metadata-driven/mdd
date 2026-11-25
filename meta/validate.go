@@ -23,12 +23,6 @@ var (
 func (o *node) validate() {
 	switch o.section {
 	case "models":
-		if id := o.ID(); id != nil {
-			typeInfo := id.Type()
-			if typeInfo.Collection || typeInfo.Set || typeInfo.Target == nil || typeInfo.Target.Kind() != KindType {
-				panic(fmt.Errorf("%s: model identifier must have a scalar type", id.Path()))
-			}
-		}
 		o.validateItems()
 	case "attrs":
 		o.validateAttribute()

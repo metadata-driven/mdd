@@ -181,6 +181,9 @@ func (ctx *Context) transaction(db *driver.Database) driver.Transaction {
 }
 
 func (ctx *Context) checkWritable() {
+	if ctx.constant {
+		panic("mdd: a predefined object has no transaction context")
+	}
 	check(ctx.Err())
 	if ctx.afterCommit {
 		panic("mdd: the current context cannot change data during OnAfterCommit")
@@ -203,24 +206,19 @@ func (ctx *Context) Rollback() {
 // SQLExecute runs a native SQL statement in the transaction for a metadata
 // source. It flushes pending model changes first and panics on failure.
 func (ctx *Context) SQLExecute(source, statement string, args ...any) sql.Result {
-	if ctx.constant {
-		panic("mdd: a predefined object has no transaction context")
-	}
 	ctx.checkWritable()
-	for _, db := range ctx.schema.databases {
-		if db.Name != source {
-			continue
-		}
-		ctx.flush()
-		tx, ok := ctx.transaction(db).(driver.SQLExecutor)
-		if !ok {
-			panic(driver.ErrSQLUnsupported)
-		}
-		result, err := tx.ExecSQL(statement, args...)
-		ctx.invalidateSourceCache(db)
-		return must(result, err)
+	db := ctx.schema.databaseByName[source]
+	if db == nil {
+		panic(fmt.Errorf("mdd: unknown storage source %q", source))
 	}
-	panic(fmt.Errorf("mdd: unknown storage source %q", source))
+	ctx.flush()
+	tx, ok := ctx.transaction(db).(driver.SQLExecutor)
+	if !ok {
+		panic(driver.ErrSQLUnsupported)
+	}
+	result, err := tx.ExecSQL(statement, args...)
+	ctx.invalidateSourceCache(db)
+	return must(result, err)
 }
 
 func (ctx *Context) invalidateSourceCache(db *driver.Database) {
@@ -261,6 +259,9 @@ func (ctx *Context) track(obj *Object) {
 }
 
 func (ctx *Context) txGet(tab *metaTable, obj *Object) driver.DataObject {
+	if ctx.constant {
+		panic("mdd: a predefined object has no transaction context")
+	}
 	check(ctx.Err())
 	newObject := obj.id == 0
 	ctx.flush()
@@ -463,8 +464,8 @@ func (ctx *Context) newObject(tab *metaTable, id uint64) *Object {
 		ctx.checkWritable()
 	}
 	if id != 0 {
-		if item := tab.predefined[id]; item != nil {
-			return predefinedObject(ctx.schema, tab, item)
+		if obj := ctx.schema.predefined[predefinedKey{tab.Model, id}]; obj != nil {
+			return obj.MDDObject().(*Object)
 		}
 		if ctx.constant {
 			panic(fmt.Errorf("mdd: %s-%d is not a predefined object", tab.Model.Path(), id))
@@ -485,16 +486,12 @@ func (ctx *Context) newObject(tab *metaTable, id uint64) *Object {
 	return obj
 }
 
-func (ctx *Context) newEnum(enum meta.Enum, typ reflect.Type, id uint64) *EnumItem {
-	if value := enum.Predefined(id); value != nil {
-		return value.(interface{ enumItemCore() *EnumItem }).enumItemCore()
+func (ctx *Context) enumItem(enum meta.Enum, id uint64) meta.ModelObject {
+	obj := ctx.schema.predefined[predefinedKey{enum, id}]
+	if obj == nil {
+		panic(fmt.Errorf("mdd: %s has no item with ID %d", enum.Path(), id))
 	}
-	for _, item := range enum.Items() {
-		if storedScalar[uint64](item.ItemID(), item.Path()) == id {
-			return predefinedEnumItem(enum, typ.Elem(), item)
-		}
-	}
-	panic(fmt.Errorf("mdd: %s has no item with ID %d", enum.Path(), id))
+	return obj
 }
 
 // FormValue returns the first value for name from the request's form or URL query.

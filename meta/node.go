@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/goldic/js"
 )
@@ -33,7 +31,6 @@ type node struct {
 	toTitle       string
 	toDescription string
 	toIcon        string
-	predefined    *sync.Map
 	parsedType    valueType
 	indexType     IndexType
 	groupAttrs    []Attribute
@@ -68,8 +65,6 @@ const (
 	cacheSource
 	cacheType
 	cacheQuery
-	cacheCache
-	cacheCacheTTL
 	cacheID
 	cacheIndexes
 	cacheStore
@@ -180,12 +175,10 @@ func (o *node) initialize() {
 		o.kind = KindSource
 	case "models":
 		o.kind = KindModel
-		o.predefined = &sync.Map{}
 	case "attrs":
 		switch {
 		case o.parsedType.isEnum:
 			o.kind = KindEnum
-			o.predefined = &sync.Map{}
 		case o.parsedType.isSet:
 			o.kind = KindSet
 		default:
@@ -499,11 +492,15 @@ func (o *node) attributeLayout() attributeLayout {
 		groups := make(map[string]bool)
 		addAttr := func(raw js.Object, location string) Attribute {
 			attr := o.newChild(raw, "attrs")
-			validateName(attr.Name(), location)
-			if attrs[attr.Name()] {
-				panic(fmt.Errorf("duplicate attrs name %q in %s", attr.Name(), o.Path()))
+			name := attr.Name()
+			validateName(name, location)
+			if name == "id" {
+				panic(fmt.Errorf("%s.name: id is reserved for the generated model identifier", location))
 			}
-			attrs[attr.Name()] = true
+			if attrs[name] {
+				panic(fmt.Errorf("duplicate attrs name %q in %s", name, o.Path()))
+			}
+			attrs[name] = true
 			result.attrs = append(result.attrs, attr)
 			return attr
 		}
@@ -524,7 +521,7 @@ func (o *node) attributeLayout() attributeLayout {
 			}
 			result.groups = append(result.groups, group)
 		}
-		if o.SetName() != "" && !attrs["id"] {
+		if o.SetName() != "" {
 			result.attrs = append(result.attrs, o.newChild(js.Object{"name": "id", "type": TypeID}, "attrs"))
 		}
 		return result
@@ -647,37 +644,6 @@ func (o *node) resolveSource(name string) Source {
 	panic(fmt.Errorf("%s references unknown source %q", o.Path(), name))
 }
 
-func (o *node) Cache() Source {
-	return cached(o, cacheCache, func() Source {
-		if o.section != "models" {
-			return nil
-		}
-		if name := o.text("cache"); name != "" {
-			return o.resolveSource(name)
-		}
-		return nil
-	})
-}
-
-func (o *node) CacheTTL() time.Duration {
-	return cached(o, cacheCacheTTL, func() time.Duration {
-		if o.section != "models" {
-			return 0
-		}
-		if o.raw["cache_ttl"] == nil {
-			return 0
-		}
-		if o.Cache() == nil {
-			panic(fmt.Errorf("%s.cache_ttl requires cache", o.Path()))
-		}
-		value, err := time.ParseDuration(o.text("cache_ttl"))
-		if err != nil || value < 0 {
-			panic(fmt.Errorf("%s.cache_ttl must be a non-negative duration", o.Path()))
-		}
-		return value
-	})
-}
-
 func (o *node) SetName() string {
 	return o.set
 }
@@ -687,14 +653,7 @@ func (o *node) ID() Attribute {
 		if o.section != "models" {
 			return nil
 		}
-		id := findByName(o.Attrs(), "id")
-		if id != nil {
-			typeInfo := id.Type()
-			if typeInfo.Target == nil || typeInfo.Target.Kind() != KindType || typeInfo.Collection || typeInfo.Set {
-				panic(fmt.Errorf("%s.id must have a scalar type", o.Path()))
-			}
-		}
-		return id
+		return findByName(o.Attrs(), "id")
 	})
 }
 
@@ -738,11 +697,7 @@ func (o *node) Type() TypeInfo {
 			result.Primitive = findByName(o.root.Types(), TypeString)
 		case KindModel:
 			if id := result.Target.(Model).ID(); id != nil {
-				idType := id.Type()
-				result.Primitive = idType.Primitive
-				result.Length = idType.Length
-				result.Precision = idType.Precision
-				result.Scale = idType.Scale
+				result.Primitive = id.Type().Primitive
 			}
 		}
 		return result
@@ -790,8 +745,6 @@ func (o *node) warmCache() {
 		o.Items()
 		o.Indexes()
 		o.Source()
-		o.Cache()
-		o.CacheTTL()
 		o.ID()
 	case KindAttr, KindSet, KindEnum:
 		o.Type()

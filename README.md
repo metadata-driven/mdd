@@ -379,7 +379,7 @@ For a user with login `alice`, name `Alice` and the `admin` enum value from the 
 
 When `to_title` is omitted or empty, the runtime chooses `{title}` for a declared stored scalar string `title` attribute, then `{name}` for a `name` attribute of the same type, and `{UID}` when neither qualifies. The selected template can return an empty title. With the default parser, `{UID}` displays a user with ID `123` as `user-123` and can write a new record to assign its ID. The title is empty if no ID is available.
 
-`mdd.TemplateEngine.Text` and `mdd.TemplateEngine.Query` can be set to custom parsers before opening the application. The text parser compiles both configured and default title expressions when the application opens. The runtime caches compiled templates for reuse. See [`template.go`](template.go) and the [runtime reference](docs/runtime.md) for the parser interface.
+`mdd.TemplateEngine.Text` and `mdd.TemplateEngine.Query` can be set to custom parsers before the first application opens with a configuration. The shared schema caches compiled templates, including configured and default title expressions, for reuse. See [`template.go`](template.go) and the [runtime reference](docs/runtime.md) for the parser interface.
 
 ## Scheduled work
 

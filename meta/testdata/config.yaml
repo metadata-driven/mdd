@@ -334,10 +334,6 @@ models:
     set_icon: 🌐
 
     attrs:
-      - name: id
-        title: Host ID
-        type: string(64)
-
       - name: ip
         title: IP address
         type: string(45)

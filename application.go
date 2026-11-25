@@ -88,13 +88,8 @@ func (a *Application[C]) Open(config meta.Config) (err error) {
 			a.Logger().Printf("mdd: open: %v", err)
 		}
 	}()
-	schema, err := convertSchema(config)
-	if err != nil {
-		return fmt.Errorf("mdd: convert metadata: %w", err)
-	}
-	schema.textTemplates.parser = TemplateEngine.Text
-	schema.queryTemplates.parser = TemplateEngine.Query
-	if err := schema.warmTemplates(config); err != nil {
+	schema := schemaByConfig(config)
+	if err := schema.prepare(); err != nil {
 		return fmt.Errorf("mdd: %w", err)
 	}
 	a.conn = map[*driver.Database]driver.Connection{}

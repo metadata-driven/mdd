@@ -16,7 +16,6 @@ import (
 type Object struct {
 	self     any
 	ctx      *Context
-	constant *Context
 	tab      *metaTable
 	item     meta.Item
 	id       uint64
@@ -50,7 +49,7 @@ func (o *Object) setAttribute(name string) (*Context, *metaAttribute, any) {
 	if o == nil {
 		panic("mdd: object is nil")
 	}
-	if o.constant != nil {
+	if o.ctx != nil && o.ctx.constant {
 		panic("mdd: a predefined object has no transaction context")
 	}
 	attr := o.tab.Attrs[name]
@@ -119,9 +118,9 @@ func (o *Object) takeChanges() driver.DataObject {
 	return changes
 }
 
-// MDDContext returns the context that owns the object.
+// MDDContext returns the transaction context that owns the object, if any.
 func (o *Object) MDDContext() any {
-	if o == nil || o.ctx == nil {
+	if o == nil || o.ctx == nil || o.ctx.constant {
 		return nil
 	}
 	return o.ctx.getSelf()
@@ -131,7 +130,7 @@ func (o *Object) ID() uint64 {
 	if o == nil {
 		return 0
 	}
-	if o.ctx != nil && o.id == 0 && !o.deleted {
+	if o.id == 0 && o.ctx != nil && !o.deleted {
 		o.ctx.txGet(o.tab, o)
 	}
 	return o.id
@@ -150,7 +149,7 @@ func (o *Object) UID() string {
 	if o == nil {
 		return ""
 	}
-	if o.item != nil && o.item.Parent().Kind() == meta.KindEnum {
+	if o.item != nil && o.id != 0 {
 		return fmt.Sprintf("%s-%d", o.item.Parent().Path(), o.id)
 	}
 	if o.tab == nil || o.tab.Model == nil {
@@ -197,8 +196,13 @@ func isValues(obj objectKeyProvider, values []any) bool {
 			if leftOK && rightOK {
 				a, aOK := left.MDDObject().(*Object)
 				b, bOK := right.MDDObject().(*Object)
-				if aOK && bOK && a != nil && a == b {
-					return true
+				if aOK && bOK && a != nil && b != nil {
+					if a == b {
+						return true
+					}
+					if a.ctx != nil && b.ctx != nil && !a.ctx.constant && !b.ctx.constant && a.ctx.app != b.ctx.app {
+						continue
+					}
 				}
 			}
 			if other := candidate.objectKey(); objKey.tab != nil && objKey.id != 0 && objKey == other {
@@ -257,19 +261,22 @@ func (o *Object) Description() string {
 }
 
 func (o *Object) Model() meta.Model {
-	if o == nil || o.tab == nil {
+	if o == nil {
 		return nil
 	}
-	return o.tab.Model
+	if o.tab != nil {
+		return o.tab.Model
+	}
+	if o.item != nil && o.item.Parent().Kind() == meta.KindModel {
+		return o.item.Parent().(meta.Model)
+	}
+	return nil
 }
 
 // Delete removes this object without changing references to it.
 func (o *Object) Delete() {
 	if o == nil {
 		return
-	}
-	if o.constant != nil {
-		panic("mdd: cannot delete a predefined object")
 	}
 	o.ctx.checkWritable()
 	if o.deleted || o.deleting {
@@ -296,7 +303,7 @@ func (o *Object) Deleted() bool {
 	if o == nil {
 		return true
 	}
-	if o.constant != nil {
+	if o.ctx != nil && o.ctx.constant {
 		return false
 	}
 	if o.deleted {
@@ -342,18 +349,24 @@ func (o *Object) getValue(attr string) (any, *metaAttribute, *Context) {
 	if o.item != nil && o.item.Parent().Kind() == meta.KindEnum {
 		return enumItemValue(o.item, o.id, attr), nil, nil
 	}
+	if o.tab == nil {
+		if attr == "id" {
+			return o.ID(), nil, nil
+		}
+		return nil, nil, nil
+	}
 	if attr == "id" {
 		return o.ID(), o.tab.Attrs[attr], o.ctx
 	}
 	metaAttr := o.attribute(attr)
-	if o.constant != nil {
+	if o.ctx != nil && o.ctx.constant {
 		value := o.data[attr]
 		if value != nil && metaAttr.Type().IsFile() {
 			value = driver.NewFile(value)
 		} else {
 			value = cloneDataValue(value)
 		}
-		return value, metaAttr, o.constant
+		return value, metaAttr, o.ctx
 	}
 	if o.deleted {
 		return nil, metaAttr, o.ctx
@@ -431,9 +444,6 @@ func (o *Object) Set(attr string, v any) {
 	if o == nil {
 		return
 	}
-	if o.constant != nil {
-		panic("mdd: cannot change a predefined object")
-	}
 	o.ctx.checkWritable()
 	if o.deleted {
 		panic(ErrNotFound)
@@ -494,35 +504,4 @@ func (o *Object) attribute(name string) *metaAttribute {
 		panic(fmt.Errorf("mdd: %s is a set, not a stored attribute", attr.Path()))
 	}
 	return attr
-}
-
-func predefinedObject(s *schema, tab *metaTable, item meta.Item) *Object {
-	id := storedScalar[uint64](item.ItemID(), item.Path())
-	if value := tab.Model.Predefined(id); value != nil {
-		return value.MDDObject().(*Object)
-	}
-	obj := must(newModelObject(tab.Model.ModelType()))
-	obj.tab, obj.item, obj.id, obj.loaded = tab, item, id, true
-	obj.constant = &Context{schema: s, constant: true}
-	obj.data = make(driver.DataObject)
-	for name, attr := range tab.Attrs {
-		if attr.column != nil {
-			obj.data[name] = driver.Cast(nil, attr.column.Type, false)
-		}
-	}
-	for _, row := range s.items {
-		if row.path != item.Path() {
-			continue
-		}
-		for name, value := range row.values {
-			attr := tab.Attrs[name]
-			if attr.Type().IsFile() {
-				obj.data[name] = value
-			} else {
-				obj.data[name] = driver.Cast(value, attr.column.Type, false)
-			}
-		}
-	}
-	model := obj.self.(meta.ModelObject)
-	return tab.Model.CachePredefined(id, model).MDDObject().(*Object)
 }

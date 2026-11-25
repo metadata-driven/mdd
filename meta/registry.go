@@ -22,30 +22,12 @@ func (o *node) Register(model ModelObject) struct{} {
 	if old := o.modelType; old != nil && old != typ {
 		panic(fmt.Errorf("meta: model %q already registered as %v", o.path, old))
 	}
-	o.predefined.Range(func(_, value any) bool {
-		if old := reflect.TypeOf(value); old != reflect.PointerTo(typ) {
-			panic(fmt.Errorf("meta: model %q already has predefined objects of type %v", o.path, old))
-		}
-		return true
-	})
 	o.modelType = typ
 	return struct{}{}
 }
 
 func (o *node) ModelType() reflect.Type {
 	return o.modelType
-}
-
-func (o *node) Predefined(id uint64) ModelObject {
-	if value, ok := o.predefined.Load(id); ok {
-		return value.(ModelObject)
-	}
-	return nil
-}
-
-func (o *node) CachePredefined(id uint64, obj ModelObject) ModelObject {
-	value, _ := o.predefined.LoadOrStore(id, obj)
-	return value.(ModelObject)
 }
 
 func (o *node) RegisterEnum(path string, typ reflect.Type) error {

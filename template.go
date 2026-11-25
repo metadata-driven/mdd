@@ -9,7 +9,6 @@ import (
 
 	"github.com/goldic/xtpl"
 	"github.com/metadata-driven/mdd/driver"
-	"github.com/metadata-driven/mdd/meta"
 )
 
 // Template is a compiled expression that can be evaluated against a value.
@@ -48,22 +47,33 @@ func (c *templateCache) parse(expr string) (Template, error) {
 	if value, ok := c.values.Load(expr); ok {
 		return value.(Template), nil
 	}
-	if c.parser == nil {
+	template, err := parseTemplate(c.parser, expr)
+	if err != nil {
+		return nil, err
+	}
+	value, _ := c.values.LoadOrStore(expr, template)
+	return value.(Template), nil
+}
+
+func parseTemplate(parser TemplateParser, expr string) (Template, error) {
+	if parser == nil {
 		return nil, fmt.Errorf("template parser is nil")
 	}
-	template, err := c.parser(expr)
+	template, err := parser(expr)
 	if err != nil {
 		return nil, err
 	}
 	if template == nil {
 		return nil, fmt.Errorf("template parser returned nil")
 	}
-	value, _ := c.values.LoadOrStore(expr, template)
-	return value.(Template), nil
+	return template, nil
 }
 
-func (s *schema) warmTemplates(config meta.Config) error {
-	for _, model := range config.Models() {
+func (s *schema) warmTemplates() error {
+	textParser := TemplateEngine.Text
+	text := make(map[string]Template)
+	query := &templateCache{parser: TemplateEngine.Query}
+	for _, model := range s.config.Models() {
 		table := s.tables[model.Name()]
 		toTitleExpr := model.ToTitle()
 		if toTitleExpr == "" {
@@ -86,9 +96,14 @@ func (s *schema) warmTemplates(config meta.Config) error {
 			if field.value == "" {
 				continue
 			}
-			template, err := s.textTemplates.parse(field.value)
-			if err != nil {
-				return fmt.Errorf("%s.%s: parse template: %w", model.Path(), field.name, err)
+			template := text[field.value]
+			if template == nil {
+				var err error
+				template, err = parseTemplate(textParser, field.value)
+				if err != nil {
+					return fmt.Errorf("%s.%s: parse template: %w", model.Path(), field.name, err)
+				}
+				text[field.value] = template
 			}
 			*field.dst = template
 		}
@@ -100,11 +115,12 @@ func (s *schema) warmTemplates(config meta.Config) error {
 				if field.value == "" {
 					continue
 				}
-				if _, err := s.queryTemplates.parse(field.value); err != nil {
+				if _, err := query.parse(field.value); err != nil {
 					return fmt.Errorf("%s.%s: parse template: %w", attr.Path(), field.name, err)
 				}
 			}
 		}
 	}
+	s.queryTemplates = query
 	return nil
 }

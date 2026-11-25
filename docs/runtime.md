@@ -49,9 +49,8 @@ It also removes marked registrations for deleted models and enums. Remove the
 marker to take ownership of a declaration. Update any callers of removed
 declarations. The generator formats files it edits.
 
-The generated API follows the runtime's identifier and set support.
-Identifiers use `type: id`, and a queryable attribute targets a model with a
-canonical set.
+The generated API uses the `id` supplied automatically for each model with a
+`set`. A queryable attribute targets a model with a canonical set.
 
 ## Application and context
 
@@ -179,15 +178,15 @@ referenced field must be stored in its model's primary table. Collections,
 computed query fields and `select` are not supported and cause a panic. The
 chosen driver can impose additional query restrictions.
 
-Metadata stores template expressions as strings. `Application.Open` compiles
-and caches model `to_title`, `to_description`, and `to_icon` templates and
-attribute `query` and `lookup` expressions. It reports syntax errors with the
-metadata path and field. Applications can replace
+Metadata stores template expressions as strings. The first `Application.Open`
+for a configuration compiles and caches model `to_title`, `to_description`, and
+`to_icon` templates and attribute `query` and `lookup` expressions. It reports
+syntax errors with the metadata path and field. Applications can replace
 `mdd.TemplateEngine.Text` and `mdd.TemplateEngine.Query` before opening. The
-default query template parser uses JSON escaping. The application captures the
-configured parsers when it opens; later `Set.Query` expressions are compiled
-and cached on first use. Rendered set queries are parsed when used, with the set
-as their default source.
+default query template parser uses JSON escaping. The shared schema captures
+the configured parsers when it is prepared for the first `Open()`.
+`Set.Query` expressions are compiled and cached on first use. Rendered set
+queries are parsed when used, with the set as their default source.
 
 A model's `title`, `description`, and `icon` describe the model definition.
 `Object.String`, `Object.Description`, and `Object.Icon` evaluate its `to_title`,
@@ -575,18 +574,20 @@ type UserType struct { mdd.EnumItem }
 var UserTypeAdmin = mdd.Item[UserType](Meta, "user.type.admin")
 ```
 
-`Item` registers the wrapper type for its enumeration. `RegisterEnum` is also
-available when no predefined variable is needed. Reading an enum attribute
-returns the same pointer from every context using that metadata, so values can
-be compared with `==`. Enum items provide `ID`, `Name`, `Title`, `Description`,
-`Icon`, and `Get`. Enum IDs in persistent configurations should be explicit
-and stable.
+`RegisterEnum` registers the wrapper type. `Item` can create a shared enum
+value during startup. The first `Open()` initializes any remaining items of
+registered enums. Reading an enum attribute returns the same pointer from
+every context using that metadata, so values can be compared with `==`. Enum
+items provide `ID`, `Name`, `Title`, `Description`, `Icon`, and `Get`. Enum IDs
+in persistent configurations should be explicit and stable.
 
 Registrations belong to the specific `meta.Config`. They must be completed
-before opening the application; applications opened from different configs do
-not share Go type registrations. Registration panics for invalid paths,
-invalid pointer types, or conflicting registrations. Application opening
-reports an error if a model's `MDDObject()` does not return a non-nil
+before the first application opens with that configuration. Run registration,
+early `Item()` calls, and the first `Open()` for each configuration sequentially
+during startup, before concurrent use. The first `Open()` builds the Go type
+index from those registrations. Registration panics for
+invalid paths, invalid pointer types, or conflicting registrations. Application
+opening reports an error if a model's `MDDObject()` does not return a non-nil
 `*mdd.Object`.
 
 Predefined model items can be declared as shared references:
@@ -595,12 +596,18 @@ Predefined model items can be declared as shared references:
 var UserSuperAdmin = mdd.Item[User](Meta, "user.super_admin")
 ```
 
-All contexts using the same metadata return the same pointer for that model
-and ID. A predefined model object has no transaction context, reads its constant
-attribute values from metadata, and rejects updates and deletion. On opening,
-the application writes those records to storage, overwriting records with the
-same IDs and resetting unspecified fields to their storage defaults. This makes
-the records available to queries and reserves their IDs.
+Before opening, `Item` provides a shared model pointer with its ID and model
+metadata. The first `Open()` builds the schema and initializes those same
+pointers with attribute data and presentation templates. Each application
+writes the predefined records to its storage when it opens. Existing records
+with the same IDs are overwritten, and unspecified fields get their storage
+defaults. A predefined model object rejects updates and deletion.
+
+`mdd` keeps one schema per parsed configuration. The schema owns the
+predefined model and enum objects and their shared read-only context, and the
+schema cache retains the configuration for the life of the process. Each
+application owns its own connections and each request has its own transaction
+context.
 
 `Set.FindBy` returns nil when no record matches. `First` and `Last` use the
 query's ordering, limit and offset. `FindOrAdd` returns the first match or
