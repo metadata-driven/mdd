@@ -19,9 +19,12 @@ domains:
 
 models:
   - name: user
-    title: '{login}'
-    description: 'user#{id} @{login} ({display_name})'
-    icon: '{type.icon}'
+    title: User
+    description: Application user
+    icon: 👤
+    to_title: '{login}'
+    to_description: '{UID} @{login} ({display_name})'
+    to_icon: '{type.icon}'
     source: db1
 
     domains: [shop, game]
@@ -187,9 +190,12 @@ models:
           permissions: [manage_users, manage_orders, impersonate_users]
 
   - name: session
-    title: '{sid}'
+    title: Session
     description: User authentication session
     icon: 🔑
+    to_title: '{sid}'
+    to_description: '{ts} ({host.ip})'
+    to_icon: 🔑
     source: realtime
 
     set: sessions
@@ -232,9 +238,12 @@ models:
       - attrs: [host, ts]
 
   - name: order
-    title: 'Order #{id}'
-    description: '{status.title}, {amount} {currency.title}'
+    title: Order
+    description: Customer order
     icon: 📦
+    to_title: 'Order #{id}'
+    to_description: '{status.title}, {amount} {currency.title}'
+    to_icon: 📦
     source: db1
 
     domains: shop
@@ -310,9 +319,11 @@ models:
       - attrs: [user, ts]
 
   - name: host
-    title: '{ip}'
+    title: Host
     description: Network host
     icon: 🖥️
+    to_title: '{ip}'
+    to_icon: 🖥️
     source: db2
 
     domains: [game]

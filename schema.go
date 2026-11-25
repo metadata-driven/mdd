@@ -323,6 +323,11 @@ type metaAttribute struct {
 	column *driver.Column
 }
 
+func (table *metaTable) hasAttr(name string, typ driver.DataType) bool {
+	attr := table.Attrs[name]
+	return attr != nil && attr.column != nil && attr.column.Type == typ && !attr.Type().IsReference()
+}
+
 func (a *metaAttribute) storageTable() *metaTable {
 	if a.table == nil || a.table.Table == nil || a.table.Database == nil {
 		panic(fmt.Errorf("mdd: %s has no storage table", a.Path()))

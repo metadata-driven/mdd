@@ -65,9 +65,16 @@ type Domain interface {
 
 type Model interface {
 	Node
+
 	// SetName is the canonical name of the model's queryable set, if any.
 	SetName() string
 	ModelType() reflect.Type
+
+	// ToTitle, ToDescription, and ToIcon return the instance presentation expressions.
+	ToTitle() string
+	ToDescription() string
+	ToIcon() string
+
 	// Register must not run concurrently with Register or ModelType on this model.
 	Register(ModelObject) struct{}
 	// Predefined returns the cached runtime object for an item ID, if present.

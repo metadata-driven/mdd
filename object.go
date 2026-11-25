@@ -144,14 +144,14 @@ func (o *Object) IsNew() bool {
 	return o != nil && o.isNew
 }
 
-// UID returns the model path and object ID, separated by '#'.
+// UID returns the model or enum path and numeric ID, separated by a hyphen.
 // It assigns an ID to a new object in the same way as ID.
 func (o *Object) UID() string {
 	if o == nil {
 		return ""
 	}
 	if o.item != nil && o.item.Parent().Kind() == meta.KindEnum {
-		return fmt.Sprintf("%s#%d", o.item.Parent().Path(), o.id)
+		return fmt.Sprintf("%s-%d", o.item.Parent().Path(), o.id)
 	}
 	if o.tab == nil || o.tab.Model == nil {
 		return ""
@@ -160,7 +160,7 @@ func (o *Object) UID() string {
 	if id == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%s#%d", o.tab.Model.Path(), id)
+	return fmt.Sprintf("%s-%d", o.tab.Model.Path(), id)
 }
 
 func (o *Object) objectKey() objectKey {
@@ -241,17 +241,17 @@ func comparableID(value any) uint64 {
 	return 0
 }
 
-// String returns the model title evaluated for this object.
+// String returns the evaluated title for this object.
 func (o *Object) String() string {
 	return o.presentation(func(tab *metaTable) Template { return tab.title })
 }
 
-// Icon returns the model icon evaluated for this object.
+// Icon returns the icon evaluated for this object.
 func (o *Object) Icon() string {
 	return o.presentation(func(tab *metaTable) Template { return tab.icon })
 }
 
-// Description returns the model description evaluated for this object.
+// Description returns the description evaluated for this object.
 func (o *Object) Description() string {
 	return o.presentation(func(tab *metaTable) Template { return tab.description })
 }

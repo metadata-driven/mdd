@@ -213,11 +213,11 @@ func TestParseYAMLSourcesAndIndexes(t *testing.T) {
 
 func TestParseYAMLKeepsRawValuesAndTemplates(t *testing.T) {
 	cfg := parseConfig(t, string(testConfigData))
-	user := lookupNode(t, cfg, "user")
-	assertEqual(t, user.Title(), "{login}")
-	assertEqual(t, user.Icon(), "{type.icon}")
-	assertEqual(t, user.Description(), "user#{id} @{login} ({display_name})")
-	assertEqual(t, user.Raw().GetStr("title"), "{login}")
+	user := cfg.ModelByName("user")
+	assertEqual(t, user.ToTitle(), "{login}")
+	assertEqual(t, user.ToIcon(), "{type.icon}")
+	assertEqual(t, user.ToDescription(), "{UID} @{login} ({display_name})")
+	assertEqual(t, user.Raw().GetStr("to_title"), "{login}")
 	assertEqual(t, user.Raw().GetStr("source"), "db1")
 	assertEqual(t, cfg.Lookup("user.permissions").Raw().GetStr("type"), "enum[]")
 	assertEqual(t, cfg.Lookup("user.recent_orders").Raw().GetStr("query"), "where(user={id}) order(ts)")

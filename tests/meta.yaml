@@ -12,9 +12,12 @@ sources:
 
 models:
   - name: user
-    title: '@{login} ({name})'
-    description: '{preferredStatus}'
-    icon: '{type.icon}'
+    title: User
+    description: Application user
+    icon: 👤
+    to_title: '@{login} ({name})'
+    to_description: '{preferredStatus}'
+    to_icon: '{type.icon}'
     source: main
     set: users
     attrs:
@@ -124,8 +127,9 @@ models:
           permissions: [ manage_users, manage_orders, impersonate_users ]
 
   - name: order
-    title: 'Order@{user.login}#{id} {amount}'
-    icon: '{status.icon}'
+    title: Order
+    to_title: 'Order@{user.login}#{id} {amount}'
+    to_icon: '{status.icon}'
     source: main
     set: orders
     attrs:

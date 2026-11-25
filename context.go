@@ -467,7 +467,7 @@ func (ctx *Context) newObject(tab *metaTable, id uint64) *Object {
 			return predefinedObject(ctx.schema, tab, item)
 		}
 		if ctx.constant {
-			panic(fmt.Errorf("mdd: %s#%d is not a predefined object", tab.Model.Path(), id))
+			panic(fmt.Errorf("mdd: %s-%d is not a predefined object", tab.Model.Path(), id))
 		}
 		if obj := ctx.objects[objectKey{tab, id}]; obj != nil {
 			return obj

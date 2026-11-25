@@ -11,31 +11,34 @@ import (
 )
 
 type node struct {
-	raw         js.Object
-	section     string
-	parent      *node
-	root        *node
-	kind        int
-	name        string
-	path        string
-	title       string
-	description string
-	icon        string
-	options     js.Object
-	itemID      any
-	itemData    js.Object
-	conn        string
-	lookupQuery string
-	model       string
-	modelType   reflect.Type
-	enumType    reflect.Type
-	predefined  *sync.Map
-	set         string
-	parsedType  valueType
-	indexType   IndexType
-	groupAttrs  []Attribute
-	cache       map[int]any
-	enumTypes   map[reflect.Type]Enum
+	raw           js.Object
+	section       string
+	parent        *node
+	root          *node
+	kind          int
+	name          string
+	path          string
+	title         string
+	description   string
+	icon          string
+	options       js.Object
+	itemID        any
+	itemData      js.Object
+	conn          string
+	lookupQuery   string
+	model         string
+	modelType     reflect.Type
+	enumType      reflect.Type
+	set           string
+	toTitle       string
+	toDescription string
+	toIcon        string
+	predefined    *sync.Map
+	parsedType    valueType
+	indexType     IndexType
+	groupAttrs    []Attribute
+	cache         map[int]any
+	enumTypes     map[reflect.Type]Enum
 }
 
 var (
@@ -101,6 +104,10 @@ func (o *node) IndexType() IndexType { return o.indexType }
 func (o *node) Description() string {
 	return o.description
 }
+
+func (o *node) ToTitle() string       { return o.toTitle }
+func (o *node) ToDescription() string { return o.toDescription }
+func (o *node) ToIcon() string        { return o.toIcon }
 
 func (o *node) Parent() Node {
 	if o.parent == nil {
@@ -209,6 +216,9 @@ func (o *node) initialize() {
 	case "sources":
 		o.conn = o.text("conn")
 	case "models":
+		o.toTitle = o.text("to_title")
+		o.toDescription = o.text("to_description")
+		o.toIcon = o.text("to_icon")
 		o.set = o.text("set")
 		if o.set != "" && (!validTypePath(o.set) || strings.Contains(o.set, ".")) {
 			panic(fmt.Errorf("%s.set must be a local identifier", o.Path()))

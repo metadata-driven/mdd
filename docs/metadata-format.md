@@ -81,9 +81,10 @@ options:
 without interpreting provider-specific keys. Schema builders may copy the
 object into the corresponding `dbschema` object for consumption by a driver.
 
-`title`, `description`, and `icon` are strings that can represent literal or
-computed values. For model element presentation, a template is evaluated in
-the context of the particular model instance it describes.
+`title`, `description`, and `icon` are strings. On a model they describe the
+model definition as literal values. The model's `to_title`, `to_description`,
+and `to_icon` fields describe a particular instance. Attributes can use
+templates directly in their presentation fields.
 
 Template syntax, including delimiters, expressions, variable and method names,
 and their case sensitivity, is outside this specification. These rules depend
@@ -94,30 +95,26 @@ not prescribe that syntax. They illustrate the Go template engine
 template engines may be used:
 
 ```yaml
-title: '{login}'
-description: Application user
-icon: '{type.icon}'
+to_title: '{login}'
+to_description: '{display_name}'
+to_icon: '{type.icon}'
 ```
 
 The metadata parser stores template expressions as strings without interpreting
 or validating their language. An implementation may compile templates when an
 application opens and evaluates them in the appropriate runtime context.
 
-Presentation properties are used directly; there is no parallel namespace for
-their computed variants. The object kind determines the evaluation context and
-how a renderer uses the result. Objects without an element context, such as
-projects and sources, normally use literal presentation values.
+The object kind determines the evaluation context and how a renderer uses the
+result. Objects without an element context, such as projects and sources,
+normally use literal presentation values.
 
-`name` is never computed. When metadata must be shown without the runtime
-context required by `title`, a renderer derives a definition label by
-humanizing `name` (`valid_for_user_type` becomes `Valid for user type`). At
-runtime, a missing `title` falls back to that definition label. Other missing
+`name` is never computed. When `title` is missing or requires a runtime context
+that is unavailable, a renderer can humanize `name` to produce a label
+(`valid_for_user_type` becomes `Valid for user type`). Other missing common
 presentation fields are empty.
 
-Each characteristic has exactly one expression. The format does not store a
-separate constant fallback beside a computed value. A template language may
-provide fallback operators, while UI or control metadata may override
-presentation for a particular UI.
+A template language may provide fallback operators. UI or control metadata may
+override presentation for a particular UI.
 
 Names should use lowercase `snake_case`. Renaming a `name` changes metadata
 identity and may require a migration. Presentation fields may change without
@@ -328,9 +325,12 @@ A model describes one logical element:
 ```yaml
 models:
   - name: user
-    title: '{login}'
-    description: 'user#{id} @{login} ({display_name})'
-    icon: '{type.icon}'
+    title: User
+    description: Application user
+    icon: 👤
+    to_title: '{login}'
+    to_description: '{UID} @{login} ({display_name})'
+    to_icon: '{type.icon}'
     source: db1
 
     domains: [shop, game]
@@ -349,7 +349,10 @@ models:
 
 | Field | Meaning |
 | --- | --- |
-| Common fields | Element presentation expressions evaluated in model context. |
+| Common fields | Model definition metadata. `title`, `description`, and `icon` are literal strings. |
+| `to_title` | Optional instance title, as a literal or a template. |
+| `to_description` | Optional instance description, as a literal or a template. |
+| `to_icon` | Optional instance icon, as a literal or a template. |
 | `source` | Default authoritative source. |
 | `domains` | Domain name or ordered list of names. Provides the default for attributes. |
 | `set` | Canonical queryable set name. |
@@ -366,22 +369,39 @@ may group them visually without changing the metadata graph.
 
 ### Element presentation
 
-For a model, `title`, `description`, and `icon` present an actual element. Each
-field may be either a literal or a template:
+Use `title`, `description`, and `icon` to display the model definition in a type
+selector or metadata browser. Use `set_title`, `set_description`, and
+`set_icon` to display the queryable set.
+
+An instance uses `to_title`, `to_description`, and `to_icon`. Each field can
+be a literal or a template.
 
 ```yaml
-title: '{login}'
-icon: '{type.icon}'
-description: 'user#{id} @{login} ({display_name})'
+to_title: '{login}'
+to_icon: '{type.icon}'
+to_description: '{UID} @{login} ({display_name})'
 ```
 
 Templates are evaluated in the context of the current model instance. Access to
 its attributes, references, and methods depends on the template implementation.
 
-There is intentionally no second static title for the model type. Metadata
-tools can identify the type by `name`; user-facing collection presentation is
-declared directly on the model through `set_title`, `set_description`, and
-`set_icon`.
+Use `to_description` for details about the instance, such as its status or
+last update time. Omit it when the title provides enough context. Use the
+model's `description` for information about the type.
+
+When `to_title` is omitted or empty, the Go runtime selects one title expression
+when it builds the model's schema. It chooses `{title}` for a declared stored
+scalar string `title` attribute, then `{name}` for a `name` attribute of the same
+type, and `{UID}` when neither qualifies. The same configured text parser
+compiles default and explicit title expressions. The template result supplies
+the title, including an empty string.
+
+With the default parser, `{UID}` returns the model path and ID, as in
+`user-123`, and can write a new record to assign its ID. The title is empty if no
+ID is available.
+
+When `to_description` or `to_icon` is omitted or empty, the corresponding
+instance value is empty.
 
 ### Identifiers
 
@@ -987,7 +1007,7 @@ A conforming parser or compiler should:
 ## Canonical syntax decisions
 
 The following metadata syntax choices are intentionally canonical. The
-template expressions shown in `title` and `unit` are illustrative only:
+template expressions shown in `to_title` and `unit` are illustrative only:
 
 ```yaml
 type: user[]          # not []user or user.collection
@@ -997,10 +1017,11 @@ type: enum[]          # inline enum collection
 type: datetime        # one temporal value type
 format: 'dd.MM.yyyy'  # concrete input and display pattern
 
+title: User           # model definition title
+to_title: '{login}'    # literal or computed instance title
 set: users            # ordinary model property; creates no metadata node
 set_title: Users
 
-title: '{login}'      # literal or computed presentation
 unit: '{currency.title}'
 
 items:
@@ -1009,8 +1030,7 @@ items:
 ```
 
 Separate global enum catalogs, object-valued `set` declarations, and additional
-cardinality flags are not part of the format. Presentation fields are used
-directly and have no parallel computed variants.
+cardinality flags are not part of the format.
 
 ## Implementation status
 

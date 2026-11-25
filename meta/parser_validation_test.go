@@ -59,7 +59,7 @@ models:
 		{"invalid collection element", "models: [{name: user, attrs: [{name: tags, type: 'string[]'}], items: [{name: root, data: {tags: [valid, 42]}}]}]", "incompatible with type"},
 		{"negative ID", "models: [{name: user, set: users, items: [{name: root, id: -1}]}]", "incompatible with type"},
 		{"overlong string", "models: [{name: user, attrs: [{name: login, type: 'string(2)'}], items: [{name: root, data: {login: long}}]}]", "incompatible with type"},
-		{"invalid template value", "models: [{name: user, title: [login]}]", "title must be a string"},
+		{"invalid template value", "models: [{name: user, to_title: [login]}]", "user.to_title must be a string"},
 		{"query on stored value", "models: [{name: user, attrs: [{name: login, query: 'from(users)'}]}]", "query requires a set<T> attribute"},
 		{"lookup on scalar", "models: [{name: user, attrs: [{name: login, lookup: 'from(users)'}]}]", "lookup requires a model or enum reference"},
 	} {

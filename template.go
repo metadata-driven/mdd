@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/goldic/xtpl"
+	"github.com/metadata-driven/mdd/driver"
 	"github.com/metadata-driven/mdd/meta"
 )
 
@@ -61,34 +62,37 @@ func (c *templateCache) parse(expr string) (Template, error) {
 	return value.(Template), nil
 }
 
-func (s *schema) warmTemplates(root meta.Node) error {
-	var visit func(meta.Node) error
-	visit = func(node meta.Node) error {
-		var title, description, icon Template
+func (s *schema) warmTemplates(config meta.Config) error {
+	for _, model := range config.Models() {
+		table := s.tables[model.Name()]
+		toTitleExpr := model.ToTitle()
+		if toTitleExpr == "" {
+			toTitleExpr = "{UID}"
+			if table.hasAttr("title", driver.TypeString) {
+				toTitleExpr = "{title}"
+			} else if table.hasAttr("name", driver.TypeString) {
+				toTitleExpr = "{name}"
+			}
+		}
 		for _, field := range []struct {
 			name  string
 			value string
 			dst   *Template
 		}{
-			{"title", node.Title(), &title},
-			{"description", node.Description(), &description},
-			{"icon", node.Icon(), &icon},
+			{"to_title", toTitleExpr, &table.title},
+			{"to_description", model.ToDescription(), &table.description},
+			{"to_icon", model.ToIcon(), &table.icon},
 		} {
 			if field.value == "" {
 				continue
 			}
 			template, err := s.textTemplates.parse(field.value)
 			if err != nil {
-				return fmt.Errorf("%s.%s: parse template: %w", node.Path(), field.name, err)
+				return fmt.Errorf("%s.%s: parse template: %w", model.Path(), field.name, err)
 			}
 			*field.dst = template
 		}
-		if node.Kind() == meta.KindModel {
-			if table := s.tables[node.Path()]; table != nil {
-				table.title, table.description, table.icon = title, description, icon
-			}
-		}
-		if attr, ok := node.(meta.Attribute); ok {
+		for _, attr := range model.Attrs() {
 			for _, field := range []struct{ name, value string }{
 				{"query", attr.Query()},
 				{"lookup", attr.LookupQuery()},
@@ -97,16 +101,10 @@ func (s *schema) warmTemplates(root meta.Node) error {
 					continue
 				}
 				if _, err := s.queryTemplates.parse(field.value); err != nil {
-					return fmt.Errorf("%s.%s: parse template: %w", node.Path(), field.name, err)
+					return fmt.Errorf("%s.%s: parse template: %w", attr.Path(), field.name, err)
 				}
 			}
 		}
-		for _, child := range node.Children() {
-			if err := visit(child); err != nil {
-				return err
-			}
-		}
-		return nil
 	}
-	return visit(root)
+	return nil
 }

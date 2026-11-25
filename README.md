@@ -69,8 +69,9 @@ models:
   - name: user
     source: main
     set: users
-    title: '@{login} ({name})'
-    icon: '{type.icon}'
+    title: User
+    to_title: '@{login} ({name})'
+    to_icon: '{type.icon}'
     attrs:
       - name: login
         type: string
@@ -367,16 +368,18 @@ Model `datetime` attributes named `created` and `updated` are filled automatical
 
 ## Templates
 
-The Go runtime uses [xtpl](https://github.com/goldic/xtpl) by default. This is a runtime choice, not a requirement of the metadata specification. Model `title`, `description` and `icon` expressions are evaluated against a particular model instance. The following fields from **`models/meta.yaml`** are templates:
+The Go runtime uses [xtpl](https://github.com/goldic/xtpl) by default. Model `title`, `description`, and `icon` describe the model definition. The runtime evaluates `to_title`, `to_description`, and `to_icon` against a particular instance. The example in **`models/meta.yaml`** uses two instance templates.
 
 ```yaml
-title: '@{login} ({name})'
-icon: '{type.icon}'
+to_title: '@{login} ({name})'
+to_icon: '{type.icon}'
 ```
 
 For a user with login `alice`, name `Alice` and the `admin` enum value from the example, `user.String()` returns `@alice (Alice)` and `user.Icon()` returns `⭐`. Placeholders can traverse model attributes or resolve Go methods; [`tests/user.go`](tests/user.go) and [`tests/meta.yaml`](tests/meta.yaml) show a computed method used in a template.
 
-`mdd.TemplateEngine.Text` and `mdd.TemplateEngine.Query` can be set to custom parsers before opening the application. The runtime compiles templates when the application opens and caches them for reuse. See [`template.go`](template.go) and the [runtime reference](docs/runtime.md) for the parser interface.
+When `to_title` is omitted or empty, the runtime chooses `{title}` for a declared stored scalar string `title` attribute, then `{name}` for a `name` attribute of the same type, and `{UID}` when neither qualifies. The selected template can return an empty title. With the default parser, `{UID}` displays a user with ID `123` as `user-123` and can write a new record to assign its ID. The title is empty if no ID is available.
+
+`mdd.TemplateEngine.Text` and `mdd.TemplateEngine.Query` can be set to custom parsers before opening the application. The text parser compiles both configured and default title expressions when the application opens. The runtime caches compiled templates for reuse. See [`template.go`](template.go) and the [runtime reference](docs/runtime.md) for the parser interface.
 
 ## Scheduled work
 

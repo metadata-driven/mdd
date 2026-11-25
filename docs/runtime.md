@@ -179,14 +179,32 @@ referenced field must be stored in its model's primary table. Collections,
 computed query fields and `select` are not supported and cause a panic. The
 chosen driver can impose additional query restrictions.
 
-Metadata stores presentation and query expressions as strings without parsing
-them. `Application.Open` compiles and caches the templates, reporting syntax
-errors with the metadata path and field. Applications can replace
+Metadata stores template expressions as strings. `Application.Open` compiles
+and caches model `to_title`, `to_description`, and `to_icon` templates and
+attribute `query` and `lookup` expressions. It reports syntax errors with the
+metadata path and field. Applications can replace
 `mdd.TemplateEngine.Text` and `mdd.TemplateEngine.Query` before opening. The
 default query template parser uses JSON escaping. The application captures the
 configured parsers when it opens; later `Set.Query` expressions are compiled
 and cached on first use. Rendered set queries are parsed when used, with the set
 as their default source.
+
+A model's `title`, `description`, and `icon` describe the model definition.
+`Object.String`, `Object.Description`, and `Object.Icon` evaluate its `to_title`,
+`to_description`, and `to_icon` against the current record. The configured
+`mdd.TemplateEngine.Text` parser compiles both explicit and default title
+expressions.
+
+When `to_title` is omitted or empty, the runtime selects one expression for the
+model during schema initialization. It chooses `{title}` for a declared stored
+scalar string `title` attribute, then `{name}` for a `name` attribute of the
+same type, and `{UID}` when neither qualifies. The template result supplies the
+title, including an empty string.
+
+With the default parser, `{UID}` calls `Object.UID()` to return a value such as
+`user-123`. This can write a new record to assign its ID. The title is empty if
+no ID is available, as when the record was deleted before its first write. An
+omitted or empty `to_description` or `to_icon` yields an empty string.
 
 Expressions are resolved according to the configured template engine. They can
 use computed values that have no corresponding metadata attribute. Query field
@@ -460,7 +478,7 @@ is not already known in the current transaction. Its cached state is cleared on
 commit and rollback. At the driver level, `Get` returns `driver.ErrNotFound` for
 a missing record, while deleting one is a no-op.
 
-`Object.UID()` returns the model path and object ID in the form `user#123`.
+`Object.UID()` joins the model path and object ID with a hyphen, as in `user-123`.
 For a new object, it writes the object to obtain its ID, just like `ID()`.
 It returns an empty string when the object has no ID, including a nil object or
 an object deleted before it was written.
