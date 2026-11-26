@@ -93,6 +93,27 @@ func require(t *testing.T, ok bool) {
 	}
 }
 
+func TestNamedEnumValues(t *testing.T) {
+	app := NewApp()
+	var id uint64
+	if err := app.Execute(nil, func(ctx *Context) {
+		admin := ctx.UserByID(1)
+		assertEqual(t, admin.Type(), UserTypeAdmin)
+		id = ctx.Orders().Add().SetCurrency(OrderCurrencyEUR).SetValidFor(admin.Type()).SetStatus(OrderStatusDraft).ID()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Execute(nil, func(ctx *Context) {
+		order := ctx.Orders().Get(id)
+		assertEqual(t, order.Currency(), OrderCurrencyEUR)
+		assertEqual(t, order.ValidFor(), UserTypeAdmin)
+		assertEqual(t, order.Status(), OrderStatusDraft)
+		assertIDs(t, ctx.Orders().Query(`where(currency=eur) where(valid_for=admin)`).IDs(), []uint64{id})
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBinaryAndFileAttributes(t *testing.T) {
 	app := NewApp()
 	var id uint64

@@ -16,6 +16,17 @@ func TestParseYAMLRejectsInvalidConfiguration(t *testing.T) {
 		{"models mapping", "models: {user: {}}", "models must be a list"},
 		{"missing model name", "models: [{title: User}]", "name must be a nonempty local identifier"},
 		{"duplicate model", "models: [{name: user}, {name: user}]", "duplicate models name"},
+		{"root enum mapping", "enums: {status: {}}", "enums must be a list"},
+		{"model enum mapping", "models: [{name: user, enums: {status: {}}}]", "user.enums must be a list"},
+		{"duplicate root enum", "enums: [{name: status}, {name: status}]", "duplicate enums name"},
+		{"duplicate model enum", "models: [{name: user, enums: [{name: status}, {name: status}]}]", "duplicate enums name"},
+		{"model and root enum", "models: [{name: status}]\nenums: [{name: status}]", `duplicate metadata path "status"`},
+		{"model set and root enum", "models: [{name: user, set: users}]\nenums: [{name: users}]", `set name "users" conflicts`},
+		{"reserved root enum", "enums: [{name: string}]", "invalid or reserved enum name"},
+		{"inline token as root enum name", "enums: [{name: enum}]", "invalid or reserved enum name"},
+		{"invalid enum path segment", "models: [{name: user, enums: [{name: account-type}]}]", "invalid or reserved enum name"},
+		{"explicit and grouped inline enum", "models: [{name: user, enums: [{name: status}], attrs: [{group: general, attrs: [{name: status, type: enum}]}]}]", `duplicate metadata path "user.status"`},
+		{"duplicate enum item ID", "enums: [{name: status, items: [{name: created, id: 2}, {name: done}]}]", "duplicate item id 2"},
 		{"duplicate attribute", "models: [{name: user, attrs: [{name: login}, {name: login}]}]", "duplicate attrs name"},
 		{"duplicate group", "models: [{name: user, attrs: [{group: general}, {group: general}]}]", "duplicate group name"},
 		{"duplicate grouped attribute", "models: [{name: user, attrs: [{name: login}, {group: general, attrs: [{name: login}]}]}]", "duplicate attrs name"},
@@ -34,6 +45,7 @@ func TestParseYAMLRejectsInvalidConfiguration(t *testing.T) {
 		{"reference without identifier", "models: [{name: user, attrs: [{name: owner, type: person}]}, {name: person}]", "has no scalar identifier"},
 		{"reserved identifier attribute", "models: [{name: user, set: users, attrs: [{group: general, attrs: [{name: id, type: id}]}]}]", "user.attrs[0].attrs[0].name: id is reserved"},
 		{"items on scalar", "models: [{name: user, attrs: [{name: status, type: string, items: []}]}]", "items is allowed only on enum"},
+		{"items on a reference to a named enum", "enums: [{name: status}]\nmodels: [{name: user, attrs: [{name: status, type: status, items: []}]}]", "items is allowed only on enum"},
 		{"unknown index attribute", "models: [{name: user, indexes: [{attrs: [missing]}]}]", "references unknown, repeated or queryable attribute"},
 		{"empty index", "models: [{name: user, indexes: [{name: empty, attrs: []}]}]", "attrs must not be empty"},
 		{"mixed index sources", `
@@ -71,7 +83,7 @@ models:
 
 func TestParseYAMLRejectsUnsupportedSyntax(t *testing.T) {
 	for _, source := range []string{
-		"enums: []",
+		"models: [{name: user, attrs: [{name: status, enums: []}]}]",
 		"models: [{name: user, kind: model}]",
 		"models: [{name: user, domain: shop}]",
 		"models: [{name: user, attrs: [{name: status, kind: enum}]}]",

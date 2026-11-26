@@ -20,7 +20,11 @@ func (g *generator) plan(cfg meta.Config) error {
 		}
 	}
 	for _, enum := range enums {
-		if err := g.bindName(enum, goName(enum.Parent().Name())+goName(enum.Name()), "RegisterEnum", enum.Items()); err != nil {
+		fallback := goName(enum.Name())
+		if owner := enum.Parent(); owner.Kind() == meta.KindModel {
+			fallback = goName(owner.Name()) + fallback
+		}
+		if err := g.bindName(enum, fallback, "RegisterEnum", enum.Items()); err != nil {
 			return err
 		}
 	}

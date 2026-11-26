@@ -298,6 +298,76 @@ models:
 	assertEqual(t, lookupNode(t, cfg, "note.welcome").ItemID(), any(0))
 }
 
+func TestParseYAMLNamedEnums(t *testing.T) {
+	cfg := parseConfig(t, `
+models:
+  - name: order
+    attrs:
+      - {name: status, type: status}
+      - {name: history, type: 'status[]'}
+      - {name: valid_for, type: user.type}
+    items:
+      - name: example
+        data:
+          status: done
+          history: [status.created, done]
+          valid_for: user.type.admin
+
+  - name: user
+    enums:
+      - name: type
+        title: Account types
+        description: Account categories
+        icon: account
+        options: {list: compact}
+        items:
+          - {name: admin, id: 10, title: Administrator}
+
+    attrs:
+      - {name: type, type: user.type, title: Current type}
+      - name: permissions
+        type: enum[]
+        items: [{name: read}]
+
+enums:
+  - name: status
+    items: [{name: created}, {name: done, id: 10}]
+`)
+	assertNames(t, cfg.Enums(), "status", "type", "permissions")
+	status := cfg.LookupEnum("status")
+	assertNode(t, status, KindEnum, "status", "status")
+	assertSameNode(t, status.Parent(), cfg)
+	assertSameNode(t, cfg.LookupType("status"), status)
+	assertNames(t, status.Items(), "created", "done")
+	assertEqual(t, status.Items()[0].ItemID(), any(uint64(1)))
+	assertEqual(t, status.Items()[1].ItemID(), any(10))
+	assertSameNode(t, cfg.Lookup("status.done"), status.Items()[1])
+	assertEqual(t, status.Items()[1].Source().Conn(), "mem:")
+	assertSameNode(t, cfg.LookupAttr("order.status").Type().Target, status)
+	history := cfg.LookupAttr("order.history").Type()
+	assertSameNode(t, history.Target, status)
+	assertEqual(t, history.Collection, true)
+
+	accountType := cfg.LookupEnum("user.type")
+	assertNode(t, accountType, KindEnum, "type", "user.type")
+	assertSameNode(t, accountType.Parent(), cfg.LookupModel("user"))
+	assertSameNode(t, cfg.Lookup("user.type"), accountType)
+	assertSameNode(t, cfg.LookupAttr("order.valid_for").Type().Target, accountType)
+	assertSameNode(t, cfg.Lookup("user.type.admin"), accountType.Items()[0])
+	assertEqual(t, accountType.Title(), "Account types")
+	assertEqual(t, accountType.Description(), "Account categories")
+	assertEqual(t, accountType.Icon(), "account")
+	assertEqual(t, accountType.Options().GetStr("list"), "compact")
+	typeAttr := cfg.LookupAttr("user.type")
+	assertNode(t, typeAttr, KindAttr, "type", "user.type")
+	assertSameNode(t, typeAttr.Type().Target, accountType)
+	assertEqual(t, typeAttr.Title(), "Current type")
+	permissions := cfg.LookupAttr("user.permissions").Type()
+	assertEqual(t, permissions.Expr, "user.permissions[]")
+	assertSameNode(t, permissions.Target, cfg.LookupEnum("user.permissions"))
+	metadataNodes(t, cfg)
+}
+
 func TestParseYAMLMemorySourceForEnumItems(t *testing.T) {
 	for _, tc := range []struct {
 		name, sources, sourceName string

@@ -10,6 +10,22 @@ sources:
     title: File storage
     conn: 'files:/tmp/mdd-storage'
 
+enums:
+  - name: currency
+    items:
+      - name: usd
+        title: USD
+        description: United States dollar
+        icon: '$'
+      - name: eur
+        title: EUR
+        description: Euro
+        icon: '€'
+      - name: gbp
+        title: GBP
+        description: Pound sterling
+        icon: '£'
+
 models:
   - name: user
     title: User
@@ -20,6 +36,22 @@ models:
     to_icon: '{type.icon}'
     source: main
     set: users
+    enums:
+      - name: type
+        items:
+          - name: admin
+            id: 1
+            title: Administrator
+            icon: 🤠
+          - name: user
+            id: 2
+            title: User
+            icon: 👤
+          - name: guest
+            id: 3
+            title: Guest
+            icon: 👻
+
     attrs:
       - name: created
         type: datetime
@@ -68,21 +100,8 @@ models:
         type: string[]
 
       - name: type
-        type: enum
+        type: user.type
         index: regular
-        items:
-          - name: admin
-            id: 1
-            title: Administrator
-            icon: 🤠
-          - name: user
-            id: 2
-            title: User
-            icon: 👤
-          - name: guest
-            id: 3
-            title: Guest
-            icon: 👻
 
       - name: previous_type
         type: user.type
@@ -156,20 +175,7 @@ models:
             title: Cancelled
             icon: ❌
       - name: currency
-        type: enum
-        items:
-          - name: usd
-            title: USD
-            description: United States dollar
-            icon: '$'
-          - name: eur
-            title: EUR
-            description: Euro
-            icon: '€'
-          - name: gbp
-            title: GBP
-            description: Pound sterling
-            icon: '£'
+        type: currency
 
       - name: amount
         type: number(12,2)

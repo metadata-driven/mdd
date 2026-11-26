@@ -57,6 +57,7 @@ const (
 	cacheTypes
 	cacheAllTypes
 	cacheEnums
+	cacheLocalEnums
 	cacheDomains
 	cacheModels
 	cacheSources
@@ -119,18 +120,18 @@ func (o *node) Parent() Node {
 func newRootNode(raw js.Object) *node {
 	result := &node{raw: raw, section: "root", modelByGoType: make(map[reflect.Type]*node)}
 	result.root = result
-	result.initialize()
+	result.initialize(false)
 	result.warm()
 	return result
 }
 
 func (o *node) newChild(raw js.Object, section string) *node {
 	result := &node{raw: raw, section: section, parent: o, root: o.root}
-	result.initialize()
+	result.initialize(false)
 	return result
 }
 
-func (o *node) initialize() {
+func (o *node) initialize(inlineEnum bool) {
 	metadata := o.metadata()
 	o.name = optionalString(metadata, "name", o.section+".name")
 	if o.section == "groups" {
@@ -153,7 +154,12 @@ func (o *node) initialize() {
 		o.path = "$"
 	case "models":
 		o.path = o.name
-	case "attrs", "enums", "items":
+	case "enums":
+		o.path = o.name
+		if o.parent.kind == KindModel {
+			o.path = o.parent.path + "." + o.name
+		}
+	case "attrs", "items":
 		o.path = o.parent.path + "." + o.name
 	case "types", "domains", "sources":
 		o.path = o.section + "." + o.name
@@ -204,7 +210,7 @@ func (o *node) initialize() {
 		o.itemData = data.Clone()
 	}
 	o.title = o.name
-	if o.kind != KindEnum {
+	if !inlineEnum {
 		o.options = optionalMap(metadata, "options", o.path+".options")
 		o.title = or(o.text("title"), o.name)
 		o.description = o.text("description")
@@ -272,18 +278,21 @@ func (o *node) lookup() nodeLookup {
 		result := nodeLookup{nodes: make(map[string]Node), attrs: make(map[string]Attribute)}
 		var visit func(Node)
 		visit = func(current Node) {
+			path := current.Path()
 			if current.Kind() == KindAttr || current.Kind() == KindSet {
 				attr := current.(*node)
-				result.attrs[attr.Path()] = attr
-				// Generic lookup keeps the enum type and its predefined values.
-				if attr.parsedType.isEnum || attr.parent.kind == KindEnum {
+				result.attrs[path] = attr
+				// Items take precedence over built-in enum fields in generic lookup.
+				if attr.parent.kind == KindEnum {
 					return
 				}
 			}
-			if previous := result.nodes[current.Path()]; previous != nil {
-				panic(fmt.Errorf("duplicate metadata path %q", current.Path()))
+			// The model's enum definitions follow its attributes in the walk.
+			if previous := result.nodes[path]; previous != nil &&
+				(current.Kind() != KindEnum || result.attrs[path] != previous) {
+				panic(fmt.Errorf("duplicate metadata path %q", path))
 			}
-			result.nodes[current.Path()] = current
+			result.nodes[path] = current
 			for _, child := range current.Children() {
 				visit(child)
 			}
@@ -344,10 +353,11 @@ func (o *node) Children() []Node {
 			result = appendNodes(result, o.Types())
 			result = appendNodes(result, o.Domains())
 			result = appendNodes(result, o.Models())
+			result = appendNodes(result, o.localEnums())
 			result = appendNodes(result, o.Sources())
 		case "models":
 			result = appendNodes(result, o.Attrs())
-			result = appendNodes(result, o.attributeLayout().enums)
+			result = appendNodes(result, o.localEnums())
 			result = appendNodes(result, o.Groups())
 			result = appendNodes(result, o.Indexes())
 			result = appendNodes(result, o.Items())
@@ -386,11 +396,30 @@ func (o *node) AllTypes() []Node {
 
 func (o *node) Enums() []Enum {
 	return cached(o, cacheEnums, func() []Enum {
-		var result []Enum
+		if o.kind != KindConfig {
+			return nil
+		}
+		result := o.localEnums()
 		for _, model := range o.Models() {
-			result = append(result, model.(*node).attributeLayout().enums...)
+			result = append(result, model.(*node).localEnums()...)
 		}
 		return result
+	})
+}
+
+func (o *node) localEnums() []Enum {
+	return cached(o, cacheLocalEnums, func() []Enum {
+		enums := declarations[Enum](o, "enums")
+		for _, enum := range enums {
+			name := enum.Name()
+			if !validTypePath(name) || o.kind == KindConfig && (isScalarType(name) || name == "enum") {
+				panic(fmt.Errorf("%s: invalid or reserved enum name", enum.Path()))
+			}
+		}
+		if o.kind == KindModel {
+			enums = append(enums, o.attributeLayout().enums...)
+		}
+		return enums
 	})
 }
 
@@ -545,7 +574,9 @@ func (o *node) attributeLayout() attributeLayout {
 			attrs[name] = true
 			result.attrs = append(result.attrs, attr)
 			if attr.parsedType.isEnum {
-				result.enums = append(result.enums, o.newChild(raw, "enums"))
+				enum := &node{raw: raw, section: "enums", parent: o, root: o.root}
+				enum.initialize(true)
+				result.enums = append(result.enums, enum)
 			}
 			return attr
 		}
@@ -792,7 +823,7 @@ func (o *node) warmCache() {
 
 func (o *node) validateStructure() {
 	if o.section == "root" {
-		for _, key := range []string{"enums", "types", "kind"} {
+		for _, key := range []string{"types", "kind"} {
 			if o.raw.Has(key) {
 				panic(fmt.Errorf("root.%s is unsupported; use the models/sources format", key))
 			}
@@ -812,18 +843,21 @@ func (o *node) validateStructure() {
 	if o.raw.Has("models") {
 		panic(fmt.Errorf("%s.models: models may only be declared at the document root", o.Path()))
 	}
+	if o.section != "models" && o.raw.Has("enums") {
+		panic(fmt.Errorf("%s.enums: enums may only be declared at the document root or on a model", o.Path()))
+	}
 	if o.section == "models" {
 		if isScalarType(o.Name()) || o.Name() == "enum" || !validTypePath(o.Name()) || strings.Contains(o.Name(), ".") {
 			panic(fmt.Errorf("%s: invalid or reserved model name", o.Path()))
 		}
-		for _, key := range []string{"model", "domain", "enums"} {
+		for _, key := range []string{"model", "domain"} {
 			if o.raw.Has(key) {
 				panic(fmt.Errorf("%s.%s is unsupported in the models/sources format", o.Path(), key))
 			}
 		}
 	}
 	if o.section == "attrs" {
-		for _, key := range []string{"domain", "enums", "len", "precision", "scale"} {
+		for _, key := range []string{"domain", "len", "precision", "scale"} {
 			if o.raw.Has(key) {
 				panic(fmt.Errorf("%s.%s is unsupported; use the canonical type/source fields", o.Path(), key))
 			}

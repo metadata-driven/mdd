@@ -5,7 +5,7 @@ import "github.com/metadata-driven/mdd"
 type UserType struct{ mdd.EnumItem }       // enum user.type
 type UserPermission struct{ mdd.EnumItem } // enum user.permission
 type OrderStatus struct{ mdd.EnumItem }    // enum order.status
-type OrderCurrency struct{ mdd.EnumItem }  // enum order.currency
+type OrderCurrency struct{ mdd.EnumItem }  // enum currency
 
 var (
 	UserTypeAdmin = mdd.Item[UserType](Meta, "user.type.admin")
@@ -20,7 +20,7 @@ var (
 	OrderStatusPlaced    = mdd.Item[OrderStatus](Meta, "order.status.placed")
 	OrderStatusCancelled = mdd.Item[OrderStatus](Meta, "order.status.cancelled")
 
-	OrderCurrencyUSD = mdd.Item[OrderCurrency](Meta, "order.currency.usd")
-	OrderCurrencyEUR = mdd.Item[OrderCurrency](Meta, "order.currency.eur")
-	OrderCurrencyGBP = mdd.Item[OrderCurrency](Meta, "order.currency.gbp")
+	OrderCurrencyUSD = mdd.Item[OrderCurrency](Meta, "currency.usd")
+	OrderCurrencyEUR = mdd.Item[OrderCurrency](Meta, "currency.eur")
+	OrderCurrencyGBP = mdd.Item[OrderCurrency](Meta, "currency.gbp")
 )
