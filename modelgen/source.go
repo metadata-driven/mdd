@@ -554,7 +554,7 @@ func cleanEditedSource(filename string, data []byte) ([]byte, error) {
 		if !ok {
 			continue
 		}
-		if group.Tok == token.VAR && len(group.Specs) == 0 &&
+		if (group.Tok == token.VAR || group.Tok == token.TYPE) && len(group.Specs) == 0 &&
 			len(bytes.TrimSpace(data[offset(group.Lparen)+1:offset(group.Rparen)])) == 0 {
 			edits = append(edits, edit{start: offset(group.Pos()), end: offset(group.End())})
 		}

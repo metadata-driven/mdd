@@ -45,7 +45,8 @@ New model types get commented examples of `OnNew`, `OnDelete`, `OnCommit`, and
 A trailing `// mdd:generated` lets subsequent runs update that declaration.
 When an attribute, set, enum value, or predefined item is removed from the
 metadata, the generator removes the corresponding marked methods or variables.
-It also removes marked registrations for deleted models and enums. Remove the
+It also removes marked registrations for deleted models and enums, and marked
+enum types without a corresponding declaration in the metadata. Remove the
 marker to take ownership of a declaration. Update any callers of removed
 declarations. The generator formats files it edits.
 

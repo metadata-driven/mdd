@@ -77,14 +77,25 @@ func (g *generator) prune(cfg meta.Config) {
 			if g.claimed[d.key] != "" || !d.managed() || !d.obsolete(cfg) {
 				continue
 			}
+			start := file.offset(d.start())
+			lineStart := strings.LastIndexByte(file.source[:start], '\n') + 1
+			if lineStart > 0 && strings.TrimSpace(file.source[lineStart:start]) == "" {
+				// Consume the preceding line break so insertions at the end still work.
+				start = lineStart - 1
+				if start > 0 && file.source[start-1] == '\r' {
+					start--
+				}
+			}
 			end, _ := file.lineEnd(d.node.End())
-			file.edits = append(file.edits, edit{start: file.offset(d.start()), end: end})
+			file.edits = append(file.edits, edit{start: start, end: end})
 		}
 	}
 }
 
 func (d *declaration) obsolete(cfg meta.Config) bool {
 	switch d.kind {
+	case token.TYPE:
+		return embeds(d, "EnumItem")
 	case token.FUNC:
 		fn := d.node.(*ast.FuncDecl)
 		if d.key.receiver == "" || fn.Body == nil || len(fn.Body.List) != 1 {
