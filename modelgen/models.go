@@ -13,19 +13,15 @@ import (
 
 func (g *generator) plan(cfg meta.Config) error {
 	models := cfg.Models()
-	var enums []meta.Enum
+	enums := cfg.Enums()
 	for _, model := range models {
 		if err := g.bindName(model, goName(model.Name()), "RegisterModel", model.Items()); err != nil {
 			return err
 		}
-		for _, attr := range model.Attrs() {
-			if attr.Kind() == meta.KindEnum {
-				enum := attr.(meta.Enum)
-				if err := g.bindName(enum, goName(model.Name())+goName(enum.Name()), "RegisterEnum", enum.Items()); err != nil {
-					return err
-				}
-				enums = append(enums, enum)
-			}
+	}
+	for _, enum := range enums {
+		if err := g.bindName(enum, goName(enum.Parent().Name())+goName(enum.Name()), "RegisterEnum", enum.Items()); err != nil {
+			return err
 		}
 	}
 	if err := g.packageSetup(); err != nil {

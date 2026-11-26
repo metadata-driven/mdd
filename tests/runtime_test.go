@@ -90,8 +90,8 @@ models:
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.ModelByName("user").Register((*User)(nil))
-	cfg.ModelByName("order").Register((*Order)(nil))
+	cfg.LookupModel("user").Register((*User)(nil))
+	cfg.LookupModel("order").Register((*Order)(nil))
 	app, err := mdd.NewApp[App](cfg)
 	if err != nil {
 		t.Fatal(err)

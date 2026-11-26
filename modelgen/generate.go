@@ -103,19 +103,15 @@ func (d *declaration) obsolete(cfg meta.Config) bool {
 			return true
 		}
 	case token.VAR:
-		var kind int
 		switch d.call.name {
 		case "Item":
-			kind = meta.KindItem
+			node := cfg.Lookup(d.call.path)
+			return node == nil || node.Kind() != meta.KindItem || node.Path() != d.call.path
 		case "RegisterEnum":
-			kind = meta.KindEnum
+			return cfg.LookupEnum(d.call.path) == nil
 		case "RegisterModel":
-			kind = meta.KindModel
-		default:
-			return false
+			return cfg.LookupModel(d.call.path) == nil
 		}
-		node := cfg.Lookup(d.call.path)
-		return node == nil || node.Kind() != kind || node.Path() != d.call.path
 	}
 	return false
 }

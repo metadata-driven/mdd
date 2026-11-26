@@ -42,15 +42,19 @@ func RegisterModel[T any](cfg meta.Config, name string) struct{} {
 	if cfg == nil {
 		panic("mdd: metadata is nil")
 	}
-	model, ok := any((*T)(nil)).(meta.ModelObject)
+	object, ok := any((*T)(nil)).(meta.ModelObject)
 	if !ok {
 		panic(fmt.Errorf("mdd: model type %v must implement MDDObject", reflect.TypeFor[T]()))
 	}
-	return schemaByConfig(cfg).registerModel(cfg.ModelByName(name), model)
+	model := cfg.LookupModel(name)
+	if model == nil {
+		panic(fmt.Errorf("meta: unknown model %q", name))
+	}
+	return schemaByConfig(cfg).registerModel(model, object)
 }
 
 func (s *schema) registerModel(model meta.Model, obj meta.ModelObject) struct{} {
-	if s.tablesByType != nil {
+	if s.prepared {
 		if typ := model.ModelType(); typ != nil && reflect.PointerTo(typ) == reflect.TypeOf(obj) {
 			return struct{}{}
 		}
@@ -61,18 +65,28 @@ func (s *schema) registerModel(model meta.Model, obj meta.ModelObject) struct{} 
 
 // RegisterEnum associates a Go enum with metadata in cfg before opening it.
 func RegisterEnum[T any](cfg meta.Config, path string) struct{} {
+	if cfg == nil {
+		panic("mdd: metadata is nil")
+	}
 	typ := reflect.TypeFor[T]()
-	if typ.Kind() != reflect.Struct || !reflect.PointerTo(typ).Implements(reflect.TypeFor[interface{ enumItemCore() *EnumItem }]()) {
+	object, ok := any((*T)(nil)).(interface {
+		meta.ModelObject
+		enumItemCore() *EnumItem
+	})
+	if typ.Kind() != reflect.Struct || !ok {
 		panic(fmt.Errorf("mdd: enum type %v must embed mdd.EnumItem", typ))
 	}
-	if s := schemaByConfig(cfg); s.tablesByType != nil {
+	if s := schemaByConfig(cfg); s.prepared {
 		if enum := cfg.EnumByType(typ); enum != nil && enum.Path() == path {
 			return struct{}{}
 		}
 		panic(fmt.Errorf("mdd: register enum %q before opening the configuration", path))
 	}
-	check(cfg.RegisterEnum(path, typ))
-	return struct{}{}
+	enum := cfg.LookupEnum(path)
+	if enum == nil {
+		panic(fmt.Errorf("meta: unknown enum %q", path))
+	}
+	return enum.Register(object)
 }
 
 // NewSet creates a set for the registered model type T in ctx.
@@ -125,7 +139,7 @@ func Item[T any](cfg meta.Config, path string) *T {
 	s := schemaByConfig(cfg)
 	if node.Parent().Kind() == meta.KindEnum {
 		enum := node.Parent().(meta.Enum)
-		if existing := enum.EnumType(); existing == nil {
+		if existing := enum.ModelType(); existing == nil {
 			RegisterEnum[T](cfg, enum.Path())
 		} else if existing != typ {
 			panic(fmt.Errorf("mdd: %s is registered as %v, not %v", enum.Path(), existing, typ))

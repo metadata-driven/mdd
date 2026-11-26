@@ -104,8 +104,8 @@ models:
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.ModelByName("event_record").Register((*EventRecord)(nil))
-	cfg.ModelByName("after_only_record").Register((*AfterOnlyRecord)(nil))
+	cfg.LookupModel("event_record").Register((*EventRecord)(nil))
+	cfg.LookupModel("after_only_record").Register((*AfterOnlyRecord)(nil))
 	app, err := mdd.NewApp[EventApp](cfg)
 	if err != nil {
 		t.Fatal(err)

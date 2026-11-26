@@ -46,15 +46,23 @@ type Config interface {
 	// Version returns the document's format version or the parser's current version.
 	Version() string
 
+	// LookupType resolves a base name used in a type expression.
+	LookupType(name string) Node
+	// LookupModel returns the model with the given canonical name, or nil.
+	LookupModel(name string) Model
+	LookupEnum(path string) Enum
+	// LookupAttr finds an attribute by its canonical metadata path.
+	LookupAttr(path string) Attribute
 	Types() []Primitive
 	AllTypes() []Node
+	Enums() []Enum
 	Domains() []Domain
 	Models() []Model
 	Sources() []Source
 
-	ModelByName(name string) Model
-	// RegisterEnum must finish before concurrent registration or EnumByType calls.
-	RegisterEnum(path string, typ reflect.Type) error
+	// ModelByType returns the model for a uniquely registered Go type,
+	// or nil if there is no unique match.
+	ModelByType(typ reflect.Type) Model
 	EnumByType(typ reflect.Type) Enum
 }
 
@@ -65,23 +73,34 @@ type Domain interface {
 type Model interface {
 	Node
 
+	ModelType() reflect.Type
+	// Register binds a model Go type during sequential configuration setup.
+	Register(ModelObject) struct{}
+
 	// SetName is the canonical name of the model's queryable set, if any.
 	SetName() string
-	ModelType() reflect.Type
 
 	// ToTitle, ToDescription, and ToIcon return the instance presentation expressions.
 	ToTitle() string
 	ToDescription() string
 	ToIcon() string
 
-	// Register must not run concurrently with Register or ModelType on this model.
-	Register(ModelObject) struct{}
 	Domains() []Domain
 	Attrs() []Attribute
 	Groups() []Group
 	Items() []Item
 	Indexes() []Index
 	Source() Source
+}
+
+type Enum interface {
+	Node
+
+	ModelType() reflect.Type
+	// Register binds an enum Go type during sequential configuration setup.
+	Register(ModelObject) struct{}
+
+	Items() []Item
 }
 
 // ModelObject identifies a Go model that exposes its MDD object.
@@ -111,12 +130,6 @@ type Attribute interface {
 type Group interface {
 	Node
 	Attrs() []Attribute
-}
-
-type Enum interface {
-	Attribute
-	EnumType() reflect.Type
-	Items() []Item
 }
 
 type Set interface {

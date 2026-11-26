@@ -64,7 +64,7 @@ func TestParseYAMLAttributeDomains(t *testing.T) {
 		{"order.amount", []string{"shop"}},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
-			attr := cfg.Lookup(tc.path).(Attribute)
+			attr := cfg.LookupAttr(tc.path)
 			domains := attr.Domains()
 			assertNames(t, domains, tc.domains...)
 			for _, domain := range domains {
@@ -97,7 +97,7 @@ func TestParseYAMLTypesAndReferences(t *testing.T) {
 		{path: "session.payload", expression: "binary", target: "types.binary", storage: "types.binary"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
-			attr := lookupNode(t, cfg, tc.path)
+			attr := cfg.LookupAttr(tc.path)
 			typeInfo := attr.Type()
 			assertEqual(t, typeInfo.Expr, tc.expression)
 			assertSameNode(t, typeInfo.Target, cfg.Lookup(tc.target))
@@ -123,7 +123,8 @@ func TestParseYAMLTypesAndReferences(t *testing.T) {
 		assertSameNode(t, id.Type().Target, cfg.Lookup("types.id"))
 	}
 
-	userType := lookupNodeKind(t, cfg, "user.type", KindEnum)
+	userType := cfg.LookupType("user.type").(Enum)
+	assertNode(t, userType, KindEnum, "type", "user.type")
 	assertNames(t, userType.Items(), "admin", "user", "guest")
 	admin := lookupNodeKind(t, cfg, "user.type.admin", KindItem)
 	assertSameNode(t, admin, userType.Items()[0])
@@ -201,7 +202,7 @@ func TestParseYAMLSourcesAndIndexes(t *testing.T) {
 			assertNames(t, index.Attrs(), tc.attrs...)
 			assertSameNode(t, index.Source(), cfg.Lookup("sources."+tc.source))
 			for _, attr := range index.Attrs() {
-				assertSameNode(t, attr, cfg.Lookup("user."+attr.Name()))
+				assertSameNode(t, attr, cfg.LookupAttr("user."+attr.Name()))
 			}
 		})
 	}
@@ -211,7 +212,7 @@ func TestParseYAMLSourcesAndIndexes(t *testing.T) {
 
 func TestParseYAMLKeepsRawValuesAndTemplates(t *testing.T) {
 	cfg := parseConfig(t, string(testConfigData))
-	user := cfg.ModelByName("user")
+	user := cfg.LookupModel("user")
 	assertEqual(t, user.ToTitle(), "{login}")
 	assertEqual(t, user.ToIcon(), "{type.icon}")
 	assertEqual(t, user.ToDescription(), "{UID} @{login} ({display_name})")
@@ -316,7 +317,7 @@ models:
         items:
           - name: set
 sources: `+tc.sources)
-			status := lookupNode(t, cfg, "user.status")
+			status := cfg.LookupType("user.status").(Enum)
 			assertNode(t, cfg.Lookup("user.status.set"), KindItem, "set", "user.status.set")
 			require(t, cfg.Lookup("set<user.status>") == nil, "enum created a set metadata node")
 			assertEqual(t, status.Items()[0].Source().Name(), tc.sourceName)

@@ -9,11 +9,11 @@ import (
 func TestParseYAMLWarmsCaches(t *testing.T) {
 	cfg := parseConfig(t, string(testConfigData))
 
-	assertCached(t, cfg, cacheStore, cacheChildren, cacheTypes, cacheAllTypes, cacheModels, cacheSources)
+	assertCached(t, cfg, cacheStore, cacheChildren, cacheTypes, cacheAllTypes, cacheEnums, cacheModels, cacheSources)
 	assertCached(t, cfg.Lookup("user"), cacheDomains, cacheAttrs, cacheItems, cacheSource)
 	assertCached(t, cfg.Lookup("user.login"), cacheType, cacheDomains)
 	assertCached(t, cfg.Lookup("user.score"), cacheDomains)
-	assertCached(t, cfg.Lookup("user.type"), cacheItems)
+	assertCached(t, cfg.LookupType("user.type"), cacheItems)
 	assertCached(t, cfg.Lookup("user.id"), cacheType, cacheSource)
 	assertCached(t, cfg.Lookup("user.indexes.login"), cacheAttrs, cacheSource)
 	for _, node := range metadataNodes(t, cfg) {
@@ -28,6 +28,7 @@ func TestNodeCachesSlices(t *testing.T) {
 	assertSameSlice(t, cfg.Children(), cfg.Children())
 	assertSameSlice(t, cfg.Types(), cfg.Types())
 	assertSameSlice(t, cfg.AllTypes(), cfg.AllTypes())
+	assertSameSlice(t, cfg.Enums(), cfg.Enums())
 	assertSameSlice(t, cfg.Domains(), cfg.Domains())
 	assertSameSlice(t, cfg.Models(), cfg.Models())
 	assertSameSlice(t, cfg.Sources(), cfg.Sources())
@@ -43,11 +44,10 @@ func TestNodeCachesSlices(t *testing.T) {
 		}
 		for _, attr := range model.Attrs() {
 			assertSameSlice(t, attr.Domains(), attr.Domains())
-			if attr.Kind() == KindEnum {
-				enum := attr.(Enum)
-				assertSameSlice(t, enum.Items(), enum.Items())
-			}
 		}
+	}
+	for _, enum := range cfg.Enums() {
+		assertSameSlice(t, enum.Items(), enum.Items())
 	}
 
 	first := rawValue(cfg, "models.0.items.0.data.permissions").Array()
@@ -78,7 +78,7 @@ func TestNodeConcurrentReads(t *testing.T) {
 					return
 				}
 				for _, node := range nodes {
-					if node.Root() != cfg || cfg.Lookup(node.Path()) != node {
+					if node.Root() != cfg || lookupMetadataNode(cfg, node) != node {
 						failures <- fmt.Sprintf("metadata identity changed for %s", node.Path())
 						return
 					}

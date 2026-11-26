@@ -24,7 +24,7 @@ type schema struct {
 	itemIDs        map[string]uint64
 	tables         map[string]*metaTable
 	tablesBySet    map[[2]string]*metaTable // Keyed by set name and source name.
-	tablesByType   map[reflect.Type]*metaTable
+	prepared       bool
 	ctx            *Context
 	predefined     map[predefinedKey]meta.ModelObject
 	queries        sync.Map
@@ -50,13 +50,12 @@ func schemaByConfig(config meta.Config) *schema {
 }
 
 func (s *schema) prepare() error {
-	if s.tablesByType != nil {
+	if s.prepared {
 		return nil
 	}
 	if err := s.convert(); err != nil {
 		return fmt.Errorf("convert metadata: %w", err)
 	}
-	tablesByType := make(map[reflect.Type]*metaTable)
 	for _, model := range s.config.Models() {
 		table := s.tables[model.Name()]
 		typ := model.ModelType()
@@ -67,29 +66,24 @@ func (s *schema) prepare() error {
 		if _, err := newModelObject(typ); err != nil {
 			return fmt.Errorf("schema: model %s: %w", model.Path(), err)
 		}
-		if _, exists := tablesByType[typ]; exists {
-			tablesByType[typ] = nil
-		} else {
-			tablesByType[typ] = table
-		}
 	}
 	if err := s.warmTemplates(); err != nil {
 		return err
 	}
 	s.preparePredefined()
-	s.tablesByType = tablesByType
+	s.prepared = true
 	return nil
 }
 
 func (s *schema) metaTableByType(typ reflect.Type) *metaTable {
-	tab, ok := s.tablesByType[typ]
-	if !ok {
-		panic(fmt.Errorf("mdd: unknown model type %v", typ))
+	if s.prepared {
+		if model := s.config.ModelByType(typ); model != nil {
+			if table := s.tables[model.Path()]; table != nil && table.Type == typ {
+				return table
+			}
+		}
 	}
-	if tab == nil {
-		panic(fmt.Errorf("mdd: multiple models registered for type %v", typ))
-	}
-	return tab
+	panic(fmt.Errorf("mdd: unknown model type %v", typ))
 }
 
 func (s *schema) getOrCreatePredefined(owner meta.Node, id uint64, create func() meta.ModelObject) meta.ModelObject {
@@ -97,7 +91,7 @@ func (s *schema) getOrCreatePredefined(owner meta.Node, id uint64, create func()
 	if obj := s.predefined[key]; obj != nil {
 		return obj
 	}
-	if s.tablesByType != nil {
+	if s.prepared {
 		panic(fmt.Errorf("mdd: %s-%d is not a predefined object", owner.Path(), id))
 	}
 	obj := create()
@@ -137,16 +131,12 @@ func (s *schema) preparePredefined() {
 			id := storedScalar[uint64](item.ItemID(), item.Path())
 			s.predefinedModel(model, item, id)
 		}
-		for _, attr := range model.Attrs() {
-			if attr.Kind() != meta.KindEnum {
-				continue
-			}
-			enum := attr.(meta.Enum)
-			if typ := enum.EnumType(); typ != nil {
-				for _, item := range enum.Items() {
-					id := storedScalar[uint64](item.ItemID(), item.Path())
-					s.predefinedEnum(enum, typ, item, id)
-				}
+	}
+	for _, enum := range s.config.Enums() {
+		if typ := enum.ModelType(); typ != nil {
+			for _, item := range enum.Items() {
+				id := storedScalar[uint64](item.ItemID(), item.Path())
+				s.predefinedEnum(enum, typ, item, id)
 			}
 		}
 	}
@@ -506,12 +496,10 @@ func (s *schema) convert() (err error) {
 		if err := s.indexItemIDs(model.Items()); err != nil {
 			return err
 		}
-		for _, attr := range model.Attrs() {
-			if attr.Kind() == meta.KindEnum {
-				if err := s.indexItemIDs(attr.(meta.Enum).Items()); err != nil {
-					return err
-				}
-			}
+	}
+	for _, enum := range cfg.Enums() {
+		if err := s.indexItemIDs(enum.Items()); err != nil {
+			return err
 		}
 	}
 	for _, model := range cfg.Models() {

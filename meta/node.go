@@ -26,7 +26,6 @@ type node struct {
 	lookupQuery   string
 	model         string
 	modelType     reflect.Type
-	enumType      reflect.Type
 	set           string
 	toTitle       string
 	toDescription string
@@ -35,7 +34,7 @@ type node struct {
 	indexType     IndexType
 	groupAttrs    []Attribute
 	cache         map[int]any
-	enumTypes     map[reflect.Type]Enum
+	modelByGoType map[reflect.Type]*node
 }
 
 var (
@@ -57,6 +56,7 @@ const (
 	cacheChildren = iota
 	cacheTypes
 	cacheAllTypes
+	cacheEnums
 	cacheDomains
 	cacheModels
 	cacheSources
@@ -74,6 +74,12 @@ const (
 type attributeLayout struct {
 	attrs  []Attribute
 	groups []Group
+	enums  []Enum
+}
+
+type nodeLookup struct {
+	nodes map[string]Node
+	attrs map[string]Attribute
 }
 
 func (o *node) Raw() js.Object      { return o.raw }
@@ -111,7 +117,7 @@ func (o *node) Parent() Node {
 }
 
 func newRootNode(raw js.Object) *node {
-	result := &node{raw: raw, section: "root", enumTypes: make(map[reflect.Type]Enum)}
+	result := &node{raw: raw, section: "root", modelByGoType: make(map[reflect.Type]*node)}
 	result.root = result
 	result.initialize()
 	result.warm()
@@ -147,15 +153,13 @@ func (o *node) initialize() {
 		o.path = "$"
 	case "models":
 		o.path = o.name
-	case "attrs", "items":
+	case "attrs", "enums", "items":
 		o.path = o.parent.path + "." + o.name
 	case "types", "domains", "sources":
 		o.path = o.section + "." + o.name
 	default:
 		o.path = o.parent.path + "." + o.section + "." + o.name
 	}
-	o.options = optionalMap(metadata, "options", o.path+".options")
-
 	if o.section == "attrs" {
 		o.parsedType = valueType{name: TypeString}
 		if o.raw.Has("type") && !o.raw.Get("type").IsNull() {
@@ -175,14 +179,13 @@ func (o *node) initialize() {
 	case "models":
 		o.kind = KindModel
 	case "attrs":
-		switch {
-		case o.parsedType.isEnum:
-			o.kind = KindEnum
-		case o.parsedType.isSet:
+		if o.parsedType.isSet {
 			o.kind = KindSet
-		default:
+		} else {
 			o.kind = KindAttr
 		}
+	case "enums":
+		o.kind = KindEnum
 	case "items":
 		o.kind = KindItem
 	case "indexes":
@@ -200,9 +203,13 @@ func (o *node) initialize() {
 		}
 		o.itemData = data.Clone()
 	}
-	o.title = or(o.text("title"), o.name)
-	o.description = o.text("description")
-	o.icon = o.text("icon")
+	o.title = o.name
+	if o.kind != KindEnum {
+		o.options = optionalMap(metadata, "options", o.path+".options")
+		o.title = or(o.text("title"), o.name)
+		o.description = o.text("description")
+		o.icon = o.text("icon")
+	}
 
 	switch o.section {
 	case "sources":
@@ -249,15 +256,35 @@ func (o *node) text(key string) string {
 }
 
 func (o *node) Lookup(path string) Node {
-	store := cached(o.root, cacheStore, func() map[string]Node {
-		result := make(map[string]Node)
+	lookup := o.lookup()
+	if node := lookup.nodes[path]; node != nil {
+		return node
+	}
+	return lookup.attrs[path]
+}
+
+func (o *node) LookupAttr(path string) Attribute {
+	return o.lookup().attrs[path]
+}
+
+func (o *node) lookup() nodeLookup {
+	return cached(o.root, cacheStore, func() nodeLookup {
+		result := nodeLookup{nodes: make(map[string]Node), attrs: make(map[string]Attribute)}
 		var visit func(Node)
-		visit = func(node Node) {
-			if previous := result[node.Path()]; previous != nil {
-				panic(fmt.Errorf("duplicate metadata path %q", node.Path()))
+		visit = func(current Node) {
+			if current.Kind() == KindAttr || current.Kind() == KindSet {
+				attr := current.(*node)
+				result.attrs[attr.Path()] = attr
+				// Generic lookup keeps the enum type and its predefined values.
+				if attr.parsedType.isEnum || attr.parent.kind == KindEnum {
+					return
+				}
 			}
-			result[node.Path()] = node
-			for _, child := range node.Children() {
+			if previous := result.nodes[current.Path()]; previous != nil {
+				panic(fmt.Errorf("duplicate metadata path %q", current.Path()))
+			}
+			result.nodes[current.Path()] = current
+			for _, child := range current.Children() {
 				visit(child)
 			}
 		}
@@ -267,17 +294,16 @@ func (o *node) Lookup(path string) Node {
 			if name == "" {
 				continue
 			}
-			if previous := result[name]; previous != nil && previous != model {
+			if previous := result.nodes[name]; previous != nil && previous != model {
 				if previous.Kind() == KindModel && previous.(Model).SetName() == name {
 					panic(fmt.Errorf("duplicate set name %q", name))
 				}
 				panic(fmt.Errorf("set name %q conflicts with metadata path %q", name, previous.Path()))
 			}
-			result[name] = model
+			result.nodes[name] = model
 		}
 		return result
 	})
-	return store[path]
 }
 
 func validateName(name, location string) {
@@ -321,13 +347,13 @@ func (o *node) Children() []Node {
 			result = appendNodes(result, o.Sources())
 		case "models":
 			result = appendNodes(result, o.Attrs())
+			result = appendNodes(result, o.attributeLayout().enums)
 			result = appendNodes(result, o.Groups())
 			result = appendNodes(result, o.Indexes())
 			result = appendNodes(result, o.Items())
-		case "attrs":
-			if o.Kind() == KindEnum {
-				result = appendNodes(result, o.Items())
-			}
+		case "enums":
+			result = appendNodes(result, o.Attrs())
+			result = appendNodes(result, o.Items())
 		}
 		return result
 	})
@@ -354,15 +380,31 @@ func (o *node) AllTypes() []Node {
 		result := make([]Node, 0, len(o.Types())+len(o.Models()))
 		result = appendNodes(result, o.Types())
 		result = appendNodes(result, o.Models())
+		return appendNodes(result, o.Enums())
+	})
+}
+
+func (o *node) Enums() []Enum {
+	return cached(o, cacheEnums, func() []Enum {
+		var result []Enum
 		for _, model := range o.Models() {
-			for _, attr := range model.Attrs() {
-				if attr.Kind() == KindEnum {
-					result = append(result, attr)
-				}
-			}
+			result = append(result, model.(*node).attributeLayout().enums...)
 		}
 		return result
 	})
+}
+
+func (o *node) LookupType(name string) Node {
+	for _, target := range o.root.AllTypes() {
+		targetName := target.Path()
+		if target.Kind() == KindType {
+			targetName = target.Name()
+		}
+		if targetName == name {
+			return target
+		}
+	}
+	return nil
 }
 
 func (o *node) Models() []Model {
@@ -415,20 +457,15 @@ func (o *node) Sources() []Source {
 			return nil
 		}
 		result := declarations[Source](o, "sources")
-		for _, model := range o.Models() {
-			for _, attr := range model.Attrs() {
-				if attr.Kind() != KindEnum {
-					continue
-				}
-				for _, source := range result {
-					if source.Conn() == "mem:" {
-						return result
-					}
-				}
-				return append(result, o.memorySource())
+		if len(o.Enums()) == 0 {
+			return result
+		}
+		for _, source := range result {
+			if source.Conn() == "mem:" {
+				return result
 			}
 		}
-		return result
+		return append(result, o.memorySource())
 	})
 }
 
@@ -455,6 +492,12 @@ func (o *node) Attrs() []Attribute {
 	}
 	return cached(o, cacheAttrs, func() []Attribute {
 		switch o.section {
+		case "enums":
+			attrs := make([]Attribute, 0, 4)
+			for _, name := range []string{"name", "title", "description", "icon"} {
+				attrs = append(attrs, o.newChild(js.Object{"name": name, "type": TypeString}, "attrs"))
+			}
+			return attrs
 		case "indexes":
 			names := stringList(o.raw["attrs"], o.Path()+".attrs")
 			if len(names) == 0 {
@@ -501,6 +544,9 @@ func (o *node) attributeLayout() attributeLayout {
 			}
 			attrs[name] = true
 			result.attrs = append(result.attrs, attr)
+			if attr.parsedType.isEnum {
+				result.enums = append(result.enums, o.newChild(raw, "enums"))
+			}
 			return attr
 		}
 		for i, raw := range objectList(o.raw, "attrs", o.Path()+".attrs") {
@@ -599,10 +645,10 @@ func (o *node) Indexes() []Index {
 func (o *node) Source() Source {
 	return cached(o, cacheSource, func() Source {
 		if o.section == "items" {
-			if o.parent.Kind() == KindEnum {
-				return o.enumSource()
-			}
 			return o.parent.Source()
+		}
+		if o.kind == KindEnum {
+			return o.enumSource()
 		}
 		if o.section != "models" && o.section != "attrs" && o.section != "indexes" {
 			return nil
@@ -658,21 +704,12 @@ func (o *node) Type() TypeInfo {
 		}
 		result := TypeInfo{
 			Expr:       parsed.expression(),
+			Target:     o.root.LookupType(parsed.name),
 			Collection: parsed.collection,
 			Set:        parsed.isSet,
 			Length:     parsed.length,
 			Precision:  parsed.precision,
 			Scale:      parsed.scale,
-		}
-		for _, target := range o.root.AllTypes() {
-			if target.Kind() == KindType && target.Name() == parsed.name {
-				result.Target = target
-				break
-			}
-			if target.Kind() != KindType && target.Path() == parsed.name {
-				result.Target = target
-				break
-			}
 		}
 		if result.Target == nil {
 			panic(fmt.Errorf("%s references unknown type %q", o.Path(), parsed.name))
@@ -735,14 +772,14 @@ func (o *node) warmCache() {
 		o.Items()
 		o.Indexes()
 		o.Source()
-	case KindAttr, KindSet, KindEnum:
+	case KindAttr, KindSet:
 		o.Type()
 		o.Domains()
 		o.Source()
 		o.Query()
-		if o.kind == KindEnum {
-			o.Items()
-		}
+	case KindEnum:
+		o.Items()
+		o.Source()
 	case KindItem:
 		o.Source()
 	case KindIndex:

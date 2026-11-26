@@ -5,53 +5,64 @@ import (
 	"reflect"
 )
 
-func (o *node) ModelByName(name string) Model {
-	item := o.Lookup(name)
-	if item == nil || item.Kind() != KindModel || item.Path() != name {
-		panic(fmt.Errorf("meta: unknown model %q", name))
+func (o *node) LookupModel(name string) Model {
+	if node := o.LookupType(name); node != nil && node.Kind() == KindModel {
+		return node.(Model)
 	}
-	return item.(Model)
+	return nil
 }
 
-func (o *node) Register(model ModelObject) struct{} {
-	typ := reflect.TypeOf(model)
+func (o *node) LookupEnum(path string) Enum {
+	if node := o.LookupType(path); node != nil && node.Kind() == KindEnum {
+		return node.(Enum)
+	}
+	return nil
+}
+
+func (o *node) Register(object ModelObject) struct{} {
+	if o.kind != KindModel && o.kind != KindEnum {
+		panic(fmt.Errorf("meta: %q is not a model or enum", o.path))
+	}
+	typ := reflect.TypeOf(object)
 	if typ == nil || typ.Kind() != reflect.Pointer || typ.Elem().Kind() != reflect.Struct {
-		panic(fmt.Errorf("meta: model %q requires a pointer to a struct", o.path))
+		panic(fmt.Errorf("meta: %q requires a pointer to a struct", o.path))
 	}
 	typ = typ.Elem()
-	if old := o.modelType; old != nil && old != typ {
-		panic(fmt.Errorf("meta: model %q already registered as %v", o.path, old))
+	if o.modelType == typ {
+		return struct{}{}
+	}
+	if o.modelType != nil {
+		panic(fmt.Errorf("meta: %q already registered as %v", o.path, o.modelType))
+	}
+	registry := o.root.modelByGoType
+	if previous, found := registry[typ]; found {
+		if o.kind == KindEnum || previous != nil && previous.kind == KindEnum {
+			if previous == nil {
+				panic(fmt.Errorf("meta: Go type %v is already registered by multiple models", typ))
+			}
+			panic(fmt.Errorf("meta: Go type %v already registered as %s", typ, previous.path))
+		}
+		// Regular models can share a Go type. Lookup by Go type is ambiguous.
+		registry[typ] = nil
+	} else {
+		registry[typ] = o
 	}
 	o.modelType = typ
 	return struct{}{}
 }
 
-func (o *node) ModelType() reflect.Type {
-	return o.modelType
-}
+func (o *node) ModelType() reflect.Type { return o.modelType }
 
-func (o *node) RegisterEnum(path string, typ reflect.Type) error {
-	if typ == nil || typ.Kind() != reflect.Struct {
-		return fmt.Errorf("meta: enum %q requires a struct type", path)
+func (o *node) ModelByType(typ reflect.Type) Model {
+	if model := o.root.modelByGoType[typ]; model != nil && model.kind == KindModel {
+		return model
 	}
-	item := o.Lookup(path)
-	if item == nil || item.Kind() != KindEnum {
-		return fmt.Errorf("meta: unknown enum %q", path)
-	}
-	if old := o.root.enumTypes[typ]; old != nil && old.Path() != path {
-		return fmt.Errorf("meta: enum type %v already registered as %s", typ, old.Path())
-	}
-	enum := item.(*node)
-	if old := enum.enumType; old != nil && old != typ {
-		return fmt.Errorf("meta: enum %s already registered as %v", path, old)
-	}
-	enum.enumType = typ
-	o.root.enumTypes[typ] = item.(Enum)
 	return nil
 }
 
-func (o *node) EnumType() reflect.Type { return o.enumType }
-
 func (o *node) EnumByType(typ reflect.Type) Enum {
-	return o.root.enumTypes[typ]
+	if enum := o.root.modelByGoType[typ]; enum != nil && enum.kind == KindEnum {
+		return enum
+	}
+	return nil
 }

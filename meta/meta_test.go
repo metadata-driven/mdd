@@ -84,26 +84,35 @@ func rawValue(node Node, path string) js.Value {
 	return value
 }
 
-func metadataNodes(t *testing.T, root Node) []*node {
+func metadataNodes(t *testing.T, root Config) []*node {
 	t.Helper()
-	rootNode, ok := root.(*node)
-	require(t, ok, "root has concrete type %T, want *node", root)
-	queue := []*node{rootNode}
-	seen := make(map[string]bool)
+	queue := []*node{root.(*node)}
+	seen := make(map[*node]bool)
 	for i := 0; i < len(queue); i++ {
 		current := queue[i]
-		require(t, !seen[current.Path()], "duplicate or cyclic child path %q", current.Path())
-		seen[current.Path()] = true
+		require(t, !seen[current], "duplicate or cyclic child node %q", current.Path())
+		seen[current] = true
 		assertSameNode(t, current.Root(), root)
-		assertSameNode(t, root.Lookup(current.Path()), current)
+		assertSameNode(t, lookupMetadataNode(root, current), current)
 		for _, child := range current.Children() {
 			assertSameNode(t, child.Parent(), current)
-			childNode, ok := child.(*node)
-			require(t, ok, "%s has concrete type %T, want *node", child.Path(), child)
-			queue = append(queue, childNode)
+			queue = append(queue, child.(*node))
 		}
 	}
 	return queue
+}
+
+func lookupMetadataNode(root Config, node Node) Node {
+	switch node.Kind() {
+	case KindAttr, KindSet:
+		return root.LookupAttr(node.Path())
+	case KindEnum:
+		return root.LookupEnum(node.Path())
+	case KindModel:
+		return root.LookupModel(node.Path())
+	default:
+		return root.Lookup(node.Path())
+	}
 }
 
 func assertCached(t *testing.T, value Node, keys ...int) {
