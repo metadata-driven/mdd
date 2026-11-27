@@ -1,10 +1,11 @@
 version: 1.0
-
-project:
-  name: test-app
-  title: My Test App
-  description: Comprehensive metadata configuration example
-  icon: 🧩
+name: test-app
+title: My Test App
+description: Comprehensive metadata configuration example
+icon: 🧩
+options:
+  editor:
+    theme: dark
 
 domains:
   - name: shop

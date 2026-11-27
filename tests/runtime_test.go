@@ -65,8 +65,7 @@ func TestApplicationClose(t *testing.T) {
 	}
 
 	const config = `
-project:
-  name: close-test
+name: close-test
 sources:
   - name: main
     conn: 'test-app-close:'

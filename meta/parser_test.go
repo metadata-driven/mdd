@@ -14,6 +14,7 @@ func TestParseYAMLCanonical(t *testing.T) {
 	assertEqual(t, cfg.Title(), "My Test App")
 	assertEqual(t, cfg.Description(), "Comprehensive metadata configuration example")
 	assertEqual(t, cfg.Icon(), "🧩")
+	assertEqual(t, cfg.Options().Get("editor").Object().GetStr("theme"), "dark")
 	require(t, cfg.Parent() == nil, "root parent = %v, want nil", cfg.Parent())
 	assertSameNode(t, cfg.Root(), cfg)
 	assertNames(t, cfg.Types(), "id", "bool", "int", "number", "datetime", "string", "binary", "json", "file")

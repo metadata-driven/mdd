@@ -13,6 +13,8 @@ func TestParseYAMLRejectsInvalidConfiguration(t *testing.T) {
 		{"duplicate YAML key", "models: []\nmodels: []", "parse metadata YAML"},
 		{"root list", "- user", "root must be an object"},
 		{"non-string mapping key", "1: value", "mapping keys must be strings"},
+		{"legacy project section", "project: {name: example}", "move its fields to the document root"},
+		{"invalid root title", "title: [Example]", "$.title must be a string"},
 		{"models mapping", "models: {user: {}}", "models must be a list"},
 		{"missing model name", "models: [{title: User}]", "name must be a nonempty local identifier"},
 		{"duplicate model", "models: [{name: user}, {name: user}]", "duplicate models name"},

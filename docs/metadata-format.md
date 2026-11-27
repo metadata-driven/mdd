@@ -29,9 +29,10 @@ The Go parser fixture is [`meta/testdata/config.yaml`](../meta/testdata/config.y
 
 ```yaml
 version: 1.0
-
-project:
-  name: example-app
+name: test-app
+title: My Test App
+description: Comprehensive metadata configuration example
+icon: 🧩
 
 domains: []
 enums: []
@@ -39,10 +40,14 @@ models: []
 sources: []
 ```
 
-| Section | Meaning |
+| Field | Meaning |
 | --- | --- |
 | `version` | Optional version of the metadata format. |
-| `project` | Metadata for the application or configuration document. |
+| `name` | Optional stable application name. Defaults to `project`. |
+| `title` | Optional application display title. |
+| `description` | Optional application description. |
+| `icon` | Optional application icon. |
+| `options` | Optional application settings as defined in [Common metadata object](#common-metadata-object). |
 | `domains` | Optional logical classifications referenced by models and attributes. |
 | `enums` | Ordered root enum declarations. |
 | `models` | Ordered model declarations; this section exists only at the document root. |
@@ -84,10 +89,11 @@ options:
 without interpreting provider-specific keys. Schema builders may copy the
 object into the corresponding `dbschema` object for consumption by a driver.
 
-`title`, `description`, and `icon` are strings. On a model they describe the
-model definition as literal values. The model's `to_title`, `to_description`,
-and `to_icon` fields describe a particular instance. Attributes can use
-templates directly in their presentation fields.
+`title`, `description`, and `icon` are strings. At the document root, they are
+literal values describing the application. On a model, the literal values
+describe the model definition. The model's `to_title`, `to_description`, and
+`to_icon` fields describe a particular instance. Attributes can use templates
+directly in their presentation fields.
 
 Template syntax, including delimiters, expressions, variable and method names,
 and their case sensitivity, is outside this specification. These rules depend
@@ -214,18 +220,6 @@ may still use `group` as a custom property. Attribute names cannot contain dots
 and must be unique across the model, including all groups. Group names must be
 unique within the model. Groups support `title`, `icon`, `description`, and
 `options`.
-
-## Project
-
-`project` is a common metadata object describing the whole configuration:
-
-```yaml
-project:
-  name: test-app
-  title: My Test App
-  description: Comprehensive metadata configuration example
-  icon: 🧩
-```
 
 ## Domains
 

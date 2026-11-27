@@ -74,8 +74,7 @@ func newEventApp(t *testing.T) *EventApp {
 func newEventAppWithSource(t *testing.T, source string) *EventApp {
 	t.Helper()
 	const config = `
-project:
-  name: event-tests
+name: event-tests
 sources:
   - name: main
     conn: 'mem:'

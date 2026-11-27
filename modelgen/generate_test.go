@@ -10,7 +10,7 @@ import (
 func TestGenerateNamedEnums(t *testing.T) {
 	dir := t.TempDir()
 	source := `
-project: {name: example}
+name: example
 enums:
   - name: status
     items: [{name: active}]

@@ -15,7 +15,7 @@ type collectionContext struct{ mdd.Context }
 
 func TestCollectionQueryElementTypes(t *testing.T) {
 	cfg := meta.MustParseYAML([]byte(`
-project: {name: collections}
+name: collections
 sources:
   - {name: main, conn: 'mem:'}
 models:

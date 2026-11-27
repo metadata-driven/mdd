@@ -58,8 +58,7 @@ The files in `models/` use `package models`; `main.go` imports that package. The
 **`models/meta.yaml`** — declare the application model:
 
 ```yaml
-project:
-  name: shop
+name: shop
 
 sources:
   - name: main

@@ -1,6 +1,5 @@
-project:
-  name: shop-example
-  title: Shop Example
+name: shop-example
+title: Shop Example
 
 sources:
   - name: main

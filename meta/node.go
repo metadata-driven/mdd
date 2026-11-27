@@ -132,10 +132,9 @@ func (o *node) newChild(raw js.Object, section string) *node {
 }
 
 func (o *node) initialize(inlineEnum bool) {
-	metadata := o.metadata()
-	o.name = optionalString(metadata, "name", o.section+".name")
+	o.name = optionalString(o.raw, "name", o.section+".name")
 	if o.section == "groups" {
-		o.name = optionalString(metadata, "group", o.section+".group")
+		o.name = optionalString(o.raw, "group", o.section+".group")
 	}
 	if o.name == "" {
 		switch o.section {
@@ -211,7 +210,7 @@ func (o *node) initialize(inlineEnum bool) {
 	}
 	o.title = o.name
 	if !inlineEnum {
-		o.options = optionalMap(metadata, "options", o.path+".options")
+		o.options = optionalMap(o.raw, "options", o.path+".options")
 		o.title = or(o.text("title"), o.name)
 		o.description = o.text("description")
 		o.icon = o.text("icon")
@@ -250,15 +249,8 @@ func (o *node) initialize(inlineEnum bool) {
 	}
 }
 
-func (o *node) metadata() js.Object {
-	if o.section == "root" {
-		return optionalMap(o.raw, "project", "project")
-	}
-	return o.raw
-}
-
 func (o *node) text(key string) string {
-	return optionalString(o.metadata(), key, o.Path()+"."+key)
+	return optionalString(o.raw, key, o.Path()+"."+key)
 }
 
 func (o *node) Lookup(path string) Node {
@@ -827,10 +819,6 @@ func (o *node) validateStructure() {
 			if o.raw.Has(key) {
 				panic(fmt.Errorf("root.%s is unsupported; use the models/sources format", key))
 			}
-		}
-		project := o.metadata()
-		if project.Has("kind") {
-			panic(fmt.Errorf("project.kind is inferred and must not be declared"))
 		}
 		return
 	}

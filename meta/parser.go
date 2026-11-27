@@ -30,6 +30,9 @@ func ParseYAML(data []byte) (config Config, err error) {
 	if major, _ := parseVersion(version); major != currentMajorVersion {
 		panic(fmt.Errorf("unsupported metadata version %v: this parser supports %d.x", version, currentMajorVersion))
 	}
+	if raw.Has("project") {
+		return nil, fmt.Errorf("root.project is unsupported (move its fields to the document root)")
+	}
 
 	config = newRootNode(raw)
 	return
