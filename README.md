@@ -284,7 +284,7 @@ Enums embed `mdd.EnumItem`. Predefined items can be compared by pointer and prov
 
 Objects belong to their transaction context. For ordinary records, pass IDs between `Execute` calls and look up the object again in the new context. `Get(id)` creates a lazy reference; `Deleted()` checks whether the record exists. A missing or deleted object's stored attributes return zero values. `Delete()` removes the object without cascading to references.
 
-For generic tools, `ctx.NewSet("users")` selects a set by metadata name and returns an `*mdd.ObjectSet` rather than a typed set.
+For tools that select a model at runtime, `ctx.NewSet("users")` returns an `*mdd.ObjectSet`. It exposes each record as an `mdd.Object`. When `*User` is registered for the model and implements `mdd.Object`, the interface contains the original `*User`.
 
 See [`tests/meta.yaml`](tests/meta.yaml), [`tests/user.go`](tests/user.go), [`tests/order.go`](tests/order.go) and [`tests/enums.go`](tests/enums.go) for a larger application model, including collections, predefined objects and computed sets.
 
@@ -304,6 +304,14 @@ _ = count
 ```
 
 Use `Find()` as an alias for `First()`, or `MustFind()` to panic with `mdd.ErrNotFound` if no match exists. `Limit`, `Offset`, `Fetch`, `Exists` and `Delete` operate on sets as well. `Order("-amount")` selects descending order.
+
+Use `Fetch` with an `mdd.Object` callback when the model is selected by name.
+
+```go
+ctx.NewSet("users").Order("login").Fetch(func(user mdd.Object) {
+	fmt.Println(user.UID(), user.Get("login"))
+})
+```
 
 In the same **`main.go` callback**, xquery can also be applied to a set or used to create one:
 
@@ -328,7 +336,7 @@ The Go API also provides `WhereContainsAll`. See the
 [runtime reference](docs/runtime.md) for collection query semantics and driver
 support.
 
-A `set<order>` attribute with a `query` is accessed with `mdd.AttrSet[Order]`, as shown by `User.Orders()` above. The query's placeholders are evaluated against that user. Query template placeholders passed to `Set.Query` are evaluated against the application context. See [`tests/query_test.go`](tests/query_test.go) and the [runtime reference](docs/runtime.md) for examples and supported behavior.
+A `set<order>` attribute with a `query` is accessed with `mdd.AttrSet[Order]`, as shown by `User.Orders()` above. Its placeholders are evaluated against the user. For a predefined user, use `ctx.NewAttrSet(user, "orders")` or pass `ctx` as the third argument to `mdd.AttrSet[Order]`. Query template placeholders passed to `Set.Query` are evaluated against the application context. See [`tests/query_test.go`](tests/query_test.go) and the [runtime reference](docs/runtime.md) for examples and supported behavior.
 
 ## Events and validation
 

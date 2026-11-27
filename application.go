@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,7 +16,11 @@ import (
 )
 
 type Application[C any] struct {
-	self   any
+	application
+}
+
+type application struct {
+	owner  any
 	schema *schema
 	logger atomic.Pointer[log.Logger]
 
@@ -25,19 +28,14 @@ type Application[C any] struct {
 	conn   map[*driver.Database]driver.Connection
 }
 
-type appProvider interface {
-	baseObject
-	Open(cfg meta.Config) error
-	Logger() *log.Logger
-	getConn(*driver.Database) driver.Connection
-}
+func (a *application) applicationCore() *application { return a }
 
 type webContext interface {
 	HandleHTTP()
 }
 
 // Logger returns the application's logger, defaulting to the standard logger.
-func (a *Application[C]) Logger() *log.Logger {
+func (a *application) Logger() *log.Logger {
 	if logger := a.logger.Load(); logger != nil {
 		return logger
 	}
@@ -46,22 +44,14 @@ func (a *Application[C]) Logger() *log.Logger {
 
 // SetLogger configures the logger inherited by new contexts.
 // A nil logger selects the standard logger. A nonempty prefix is added as [prefix].
-func (a *Application[C]) SetLogger(logger *log.Logger, prefix string) {
+func (a *application) SetLogger(logger *log.Logger, prefix string) {
 	if logger == nil {
 		logger = log.Default()
 	}
 	a.logger.Store(withLogPrefix(logger, prefix))
 }
 
-func (a *Application[C]) getSelf() any {
-	return a.self
-}
-
-func (a *Application[C]) setSelf(self any) {
-	a.self = self
-}
-
-func (a *Application[C]) Close() (result error) {
+func (a *application) Close() (result error) {
 	defer func() {
 		if result != nil {
 			a.Logger().Printf("mdd: close: %v", result)
@@ -79,7 +69,7 @@ func (a *Application[C]) Close() (result error) {
 	return errors.Join(errs...)
 }
 
-func (a *Application[C]) Open(config meta.Config) (err error) {
+func (a *application) Open(config meta.Config) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = toError(r)
@@ -101,7 +91,7 @@ func (a *Application[C]) Open(config meta.Config) (err error) {
 	return
 }
 
-func (a *Application[C]) initPredefined() error {
+func (a *application) initPredefined() error {
 	return safeCall(func() {
 		for _, db := range a.schema.databases {
 			var tx driver.Transaction
@@ -178,8 +168,10 @@ func (a *Application[C]) execute(c context.Context, w io.Writer, r *http.Request
 			logger.Printf("mdd: execute: %v", err)
 		}
 	}()
-	ctx := a.newContext(c, w, r)
-	base = any(ctx).(interface{ contextCore() *Context }).contextCore()
+	ctx := new(C)
+	core := any(ctx).(interface{ contextCore() *Context }).contextCore()
+	core.initContext(c, ctx, &a.application, w, r)
+	base = core
 	base.SetLogPrefix(logPrefix)
 	check(base.Err())
 	if hook, ok := any(ctx).(interface{ OnInit() }); ok {
@@ -215,7 +207,7 @@ func (a *Application[C]) Cron(c context.Context, period time.Duration, fn func(*
 	}
 }
 
-func (a *Application[C]) getConn(db *driver.Database) driver.Connection {
+func (a *application) getConn(db *driver.Database) driver.Connection {
 	a.connMu.Lock()
 	defer a.connMu.Unlock()
 
@@ -228,10 +220,4 @@ func (a *Application[C]) getConn(db *driver.Database) driver.Connection {
 	}
 	a.conn[db] = conn
 	return conn
-}
-
-func (a *Application[C]) newContext(base context.Context, w io.Writer, r *http.Request) *C {
-	ctx := newBaseObject(reflect.TypeFor[C]()).(interface{ contextCore() *Context }).contextCore()
-	ctx.initContext(base, a, a.schema, w, r)
-	return ctx.getSelf().(*C)
 }

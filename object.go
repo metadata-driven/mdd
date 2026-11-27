@@ -12,9 +12,34 @@ import (
 	"github.com/metadata-driven/mdd/meta"
 )
 
-// Object stores the state shared by a model and its context.
-type Object struct {
-	self     any
+// Object is the common interface embedded by model types.
+type Object interface {
+	ID() uint64
+	UID() string
+	String() string
+	Icon() string
+	Description() string
+
+	Meta() meta.Model
+	MDDContext() any
+
+	Is(values ...any) bool
+	IsNew() bool
+	Deleted() bool
+	Get(attr string) any
+	Set(attr string, v any)
+	Delete()
+
+	objectValue
+	getValue(string) (any, *metaAttribute, *Context)
+}
+
+type objectValue interface {
+	objectCore() *object
+}
+
+type object struct {
+	self     objectValue
 	ctx      *Context
 	tab      *metaTable
 	item     meta.Item
@@ -27,55 +52,38 @@ type Object struct {
 	deleting bool
 }
 
-// MDDObject returns the embedded object of a model.
-func (o *Object) MDDObject() any { return o }
+var _ Object = (*object)(nil)
 
-func (o *Object) getSelf() any {
-	return o.self
+func (o *object) objectCore() *object { return o }
+
+func (o *object) modelObject() Object {
+	if o == nil {
+		return nil
+	}
+	return o.self.(Object)
 }
 
-func (o *Object) setSelf(self any) {
-	o.self = self
-}
-
-func (o *Object) initObject(ctx *Context, tab *metaTable, id uint64) {
+func (o *object) initObject(ctx *Context, tab *metaTable, id uint64) {
 	o.ctx = ctx
 	o.id = id
 	o.tab = tab
 	o.isNew = id == 0
 }
 
-func (o *Object) setAttribute(name string) (*Context, *metaAttribute, any) {
-	if o == nil {
-		panic("mdd: object is nil")
-	}
-	if o.ctx != nil && o.ctx.constant {
-		panic("mdd: a predefined object has no transaction context")
-	}
-	attr := o.tab.Attrs[name]
-	if attr == nil {
-		panic(fmt.Errorf("mdd: unknown attribute %s.%s", o.tab.Name, name))
-	}
-	if !attr.Type().Set {
-		panic(fmt.Errorf("mdd: %s is not a set", attr.Path()))
-	}
-	return o.ctx, attr, o.self
-}
-
-func (o *Object) setID(id uint64) {
+func (o *object) setID(id uint64) {
 	o.id = id
 	o.loaded = true
 	o.deleted = false
 }
 
-func (o *Object) clearCache() {
+func (o *object) clearCache() {
 	clear(o.data)
 	clear(o.changes)
 	o.loaded = false
 	o.deleted = false
 }
 
-func (o *Object) clearFiles() {
+func (o *object) clearFiles() {
 	for name := range o.data {
 		if attr := o.tab.Attrs[name]; attr != nil && attr.Type().IsFile() {
 			delete(o.data, name)
@@ -83,7 +91,7 @@ func (o *Object) clearFiles() {
 	}
 }
 
-func (o *Object) prepareCreated() {
+func (o *object) prepareCreated() {
 	if o.tab.created == nil {
 		return
 	}
@@ -93,7 +101,7 @@ func (o *Object) prepareCreated() {
 	o.Set("created", time.Now())
 }
 
-func (o *Object) onCommit() {
+func (o *object) onCommit() {
 	if o.tab.updated != nil {
 		o.Set("updated", time.Now())
 	}
@@ -103,7 +111,7 @@ func (o *Object) onCommit() {
 }
 
 // takeChanges merges non-file values into the cache and returns the fields to write.
-func (o *Object) takeChanges() driver.DataObject {
+func (o *object) takeChanges() driver.DataObject {
 	changes := o.changes
 	o.changes = nil
 	for name, value := range changes {
@@ -119,14 +127,14 @@ func (o *Object) takeChanges() driver.DataObject {
 }
 
 // MDDContext returns the transaction context that owns the object, if any.
-func (o *Object) MDDContext() any {
+func (o *object) MDDContext() any {
 	if o == nil || o.ctx == nil || o.ctx.constant {
 		return nil
 	}
-	return o.ctx.getSelf()
+	return o.ctx.self
 }
 
-func (o *Object) ID() uint64 {
+func (o *object) ID() uint64 {
 	if o == nil {
 		return 0
 	}
@@ -139,13 +147,13 @@ func (o *Object) ID() uint64 {
 // IsNew reports whether Add created this object in the current transaction.
 // It remains true after writes and throughout commit hooks, then becomes false
 // when commit or rollback completes. A nil object returns false.
-func (o *Object) IsNew() bool {
+func (o *object) IsNew() bool {
 	return o != nil && o.isNew
 }
 
 // UID returns the model or enum path and numeric ID, separated by a hyphen.
 // It assigns an ID to a new object in the same way as ID.
-func (o *Object) UID() string {
+func (o *object) UID() string {
 	if o == nil {
 		return ""
 	}
@@ -162,7 +170,7 @@ func (o *Object) UID() string {
 	return fmt.Sprintf("%s-%d", o.tab.Model.Path(), id)
 }
 
-func (o *Object) objectKey() objectKey {
+func (o *object) objectKey() objectKey {
 	if o == nil {
 		return objectKey{}
 	}
@@ -170,50 +178,31 @@ func (o *Object) objectKey() objectKey {
 }
 
 // Is reports whether this object matches any supplied ID or object.
-func (o *Object) Is(values ...any) bool {
-	return o != nil && isValues(o, values)
-}
-
-func isValues(obj objectKeyProvider, values []any) bool {
-	if len(values) == 0 {
+func (o *object) Is(values ...any) bool {
+	if o == nil || len(values) == 0 {
 		return false
 	}
-	objKey := obj.objectKey()
+	key := o.objectKey()
 	for _, val := range values {
-		if val == nil {
-			continue
-		}
-		if obj == val {
-			return true
-		}
-		if candidate, ok := val.(objectKeyProvider); ok {
-			v := reflect.ValueOf(candidate)
-			if v.Kind() == reflect.Pointer && v.IsNil() {
+		if candidate, ok := val.(objectValue); ok {
+			if nilModel(candidate) {
 				continue
 			}
-			left, leftOK := obj.(interface{ MDDObject() any })
-			right, rightOK := candidate.(interface{ MDDObject() any })
-			if leftOK && rightOK {
-				a, aOK := left.MDDObject().(*Object)
-				b, bOK := right.MDDObject().(*Object)
-				if aOK && bOK && a != nil && b != nil {
-					if a == b {
-						return true
-					}
-					if a.ctx != nil && b.ctx != nil && !a.ctx.constant && !b.ctx.constant && a.ctx.app != b.ctx.app {
-						continue
-					}
-				}
+			other := candidate.objectCore()
+			if other == nil {
+				continue
 			}
-			if other := candidate.objectKey(); objKey.tab != nil && objKey.id != 0 && objKey == other {
+			if o == other {
 				return true
 			}
-			continue
-		}
-		if vID := comparableID(val); vID != 0 {
-			if objKey.id == vID {
+			if o.ctx != nil && other.ctx != nil && !o.ctx.constant && !other.ctx.constant && o.ctx.app != other.ctx.app {
+				continue
+			}
+			if otherKey := other.objectKey(); key.tab != nil && key.id != 0 && key == otherKey {
 				return true
 			}
+		} else if id := comparableID(val); id != 0 && key.id == id {
+			return true
 		}
 	}
 	return false
@@ -246,21 +235,22 @@ func comparableID(value any) uint64 {
 }
 
 // String returns the evaluated title for this object.
-func (o *Object) String() string {
+func (o *object) String() string {
 	return o.presentation(func(tab *metaTable) Template { return tab.title })
 }
 
 // Icon returns the icon evaluated for this object.
-func (o *Object) Icon() string {
+func (o *object) Icon() string {
 	return o.presentation(func(tab *metaTable) Template { return tab.icon })
 }
 
 // Description returns the description evaluated for this object.
-func (o *Object) Description() string {
+func (o *object) Description() string {
 	return o.presentation(func(tab *metaTable) Template { return tab.description })
 }
 
-func (o *Object) Model() meta.Model {
+// Meta returns the metadata for the object's model.
+func (o *object) Meta() meta.Model {
 	if o == nil {
 		return nil
 	}
@@ -274,7 +264,7 @@ func (o *Object) Model() meta.Model {
 }
 
 // Delete removes this object without changing references to it.
-func (o *Object) Delete() {
+func (o *object) Delete() {
 	if o == nil {
 		return
 	}
@@ -299,7 +289,7 @@ func (o *Object) Delete() {
 }
 
 // Deleted reports whether this object is absent from its primary source.
-func (o *Object) Deleted() bool {
+func (o *object) Deleted() bool {
 	if o == nil {
 		return true
 	}
@@ -324,7 +314,7 @@ func (o *Object) Deleted() bool {
 	return false
 }
 
-func (o *Object) presentation(get func(*metaTable) Template) string {
+func (o *object) presentation(get func(*metaTable) Template) string {
 	if o == nil || o.tab == nil || o.tab.Model == nil {
 		return ""
 	}
@@ -337,17 +327,14 @@ func (o *Object) presentation(get func(*metaTable) Template) string {
 	return result.String()
 }
 
-func (o *Object) Get(attr string) any {
+func (o *object) Get(attr string) any {
 	value, _, _ := o.getValue(attr)
 	return value
 }
 
-func (o *Object) getValue(attr string) (any, *metaAttribute, *Context) {
+func (o *object) getValue(attr string) (any, *metaAttribute, *Context) {
 	if o == nil {
 		return nil, nil, nil
-	}
-	if o.item != nil && o.item.Parent().Kind() == meta.KindEnum {
-		return enumItemValue(o.item, o.id, attr), nil, nil
 	}
 	if o.tab == nil {
 		if attr == "id" {
@@ -419,7 +406,7 @@ func cloneDataValue(value any) any {
 	}
 }
 
-func (o *Object) mergeData(tab *metaTable, row driver.DataObject) {
+func (o *object) mergeData(tab *metaTable, row driver.DataObject) {
 	if o.data == nil {
 		o.data = row
 		for name := range row {
@@ -440,7 +427,7 @@ func (o *Object) mergeData(tab *metaTable, row driver.DataObject) {
 	}
 }
 
-func (o *Object) Set(attr string, v any) {
+func (o *object) Set(attr string, v any) {
 	if o == nil {
 		return
 	}
@@ -468,7 +455,7 @@ func (o *Object) Set(attr string, v any) {
 	delete(o.data, attr)
 }
 
-func (o *Object) castValue(attr *metaAttribute, value any) any {
+func (o *object) castValue(attr *metaAttribute, value any) any {
 	info := attr.Type()
 	if !info.Collection {
 		return driver.Cast(value, attr.column.Type, false)
@@ -495,7 +482,7 @@ func (o *Object) castValue(attr *metaAttribute, value any) any {
 	return result
 }
 
-func (o *Object) attribute(name string) *metaAttribute {
+func (o *object) attribute(name string) *metaAttribute {
 	attr := o.tab.Attrs[name]
 	if attr == nil {
 		panic(fmt.Errorf("mdd: unknown attribute %s.%s", o.tab.Name, name))

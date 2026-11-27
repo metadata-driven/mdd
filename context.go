@@ -11,12 +11,16 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"reflect"
 	"time"
 
 	"github.com/metadata-driven/mdd/driver"
 	"github.com/metadata-driven/mdd/meta"
 )
+
+// ContextProvider is implemented by Context and application contexts that embed it.
+type ContextProvider interface {
+	contextCore() *Context
+}
 
 type Context struct {
 	context.Context
@@ -30,7 +34,7 @@ type Context struct {
 	responseStarted   bool
 
 	self          any
-	app           appProvider
+	app           *application
 	schema        *schema
 	logger        *log.Logger
 	logBase       *log.Logger
@@ -38,19 +42,15 @@ type Context struct {
 	timeoutCancel context.CancelFunc
 	txStarted     bool
 
-	objects map[objectKey]*Object
+	objects map[objectKey]*object
 	txs     map[*driver.Database]driver.Transaction
 
-	pending       *Object
-	commitQueue   []*Object
-	commitWritten map[*Object]bool // Also records which objects are queued.
+	pending       *object
+	commitQueue   []*object
+	commitWritten map[*object]bool // Also records which objects are queued.
 	committing    bool
 	afterCommit   bool
 	constant      bool
-}
-
-type objectKeyProvider interface {
-	objectKey() objectKey
 }
 
 type objectKey struct {
@@ -68,7 +68,7 @@ func (ctx *Context) MDDApp() any {
 	if ctx == nil || ctx.app == nil {
 		return nil
 	}
-	return ctx.app.getSelf()
+	return ctx.app.owner
 }
 
 func (ctx *Context) Meta() meta.Config {
@@ -135,19 +135,11 @@ func (ctx *Context) SetTimeout(timeout time.Duration) {
 	ctx.Context, ctx.timeoutCancel = context.WithTimeout(ctx.timeoutParent, timeout)
 }
 
-func (ctx *Context) getSelf() any {
-	return ctx.self
-}
-
-func (ctx *Context) setSelf(self any) {
-	ctx.self = self
-}
-
 func (ctx *Context) contextCore() *Context {
 	return ctx
 }
 
-func (ctx *Context) initContext(c context.Context, app appProvider, schema *schema, w io.Writer, r *http.Request) {
+func (ctx *Context) initContext(c context.Context, self any, app *application, w io.Writer, r *http.Request) {
 	if r != nil {
 		c = r.Context()
 	}
@@ -157,16 +149,13 @@ func (ctx *Context) initContext(c context.Context, app appProvider, schema *sche
 	ctx.Context = c
 	ctx.SetWriter(w)
 	ctx.Request = r
+	ctx.self = self
 	ctx.app = app
 	ctx.logBase = app.Logger()
 	ctx.logger = ctx.logBase
-	ctx.schema = schema
-	ctx.objects = make(map[objectKey]*Object)
+	ctx.schema = app.schema
+	ctx.objects = make(map[objectKey]*object)
 	ctx.txs = make(map[*driver.Database]driver.Transaction)
-}
-
-func (ctx *Context) metaTableByType(typ reflect.Type) *metaTable {
-	return ctx.schema.metaTableByType(typ)
 }
 
 func (ctx *Context) transaction(db *driver.Database) driver.Transaction {
@@ -236,7 +225,7 @@ func (ctx *Context) invalidateSourceCache(db *driver.Database) {
 	}
 }
 
-func (ctx *Context) txSet(obj *Object) {
+func (ctx *Context) txSet(obj *object) {
 	ctx.checkWritable()
 	if obj.id == 0 && ctx.pending != obj {
 		panic("mdd: cannot change an unsaved object while it is being written")
@@ -248,9 +237,9 @@ func (ctx *Context) txSet(obj *Object) {
 	ctx.track(obj)
 }
 
-func (ctx *Context) track(obj *Object) {
+func (ctx *Context) track(obj *object) {
 	if ctx.commitWritten == nil {
-		ctx.commitWritten = make(map[*Object]bool)
+		ctx.commitWritten = make(map[*object]bool)
 	}
 	if _, exists := ctx.commitWritten[obj]; !exists {
 		ctx.commitWritten[obj] = false
@@ -258,7 +247,7 @@ func (ctx *Context) track(obj *Object) {
 	}
 }
 
-func (ctx *Context) txGet(tab *metaTable, obj *Object) driver.DataObject {
+func (ctx *Context) txGet(tab *metaTable, obj *object) driver.DataObject {
 	if ctx.constant {
 		panic("mdd: a predefined object has no transaction context")
 	}
@@ -276,7 +265,7 @@ func (ctx *Context) txGet(tab *metaTable, obj *Object) driver.DataObject {
 	return row
 }
 
-func (ctx *Context) txDelete(obj *Object, exists bool) {
+func (ctx *Context) txDelete(obj *object, exists bool) {
 	ctx.checkWritable()
 	if ctx.pending == obj {
 		ctx.pending = nil
@@ -459,13 +448,13 @@ func (ctx *Context) rollback() {
 	}
 }
 
-func (ctx *Context) newObject(tab *metaTable, id uint64) *Object {
+func (ctx *Context) newObject(tab *metaTable, id uint64) *object {
 	if id == 0 {
 		ctx.checkWritable()
 	}
 	if id != 0 {
 		if obj := ctx.schema.predefined[predefinedKey{tab.Model, id}]; obj != nil {
-			return obj.MDDObject().(*Object)
+			return obj.objectCore()
 		}
 		if ctx.constant {
 			panic(fmt.Errorf("mdd: %s-%d is not a predefined object", tab.Model.Path(), id))
@@ -474,7 +463,7 @@ func (ctx *Context) newObject(tab *metaTable, id uint64) *Object {
 			return obj
 		}
 	}
-	obj := must(newModelObject(tab.Type))
+	obj := tab.factory.newObject()
 	obj.initObject(ctx, tab, id)
 	if id == 0 {
 		ctx.flush()
@@ -486,12 +475,12 @@ func (ctx *Context) newObject(tab *metaTable, id uint64) *Object {
 	return obj
 }
 
-func (ctx *Context) enumItem(enum meta.Enum, id uint64) meta.ModelObject {
+func (ctx *Context) enumItem(enum meta.Enum, id uint64) EnumItem {
 	obj := ctx.schema.predefined[predefinedKey{enum, id}]
 	if obj == nil {
 		panic(fmt.Errorf("mdd: %s has no item with ID %d", enum.Path(), id))
 	}
-	return obj
+	return obj.(EnumItem)
 }
 
 // FormValue returns the first value for name from the request's form or URL query.

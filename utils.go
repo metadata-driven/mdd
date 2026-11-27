@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"log"
 	"reflect"
 	"strconv"
@@ -12,6 +13,54 @@ import (
 	"github.com/metadata-driven/mdd/driver"
 	"github.com/metadata-driven/mdd/meta"
 )
+
+func check(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+func must[T any](value T, err error) T {
+	check(err)
+	return value
+}
+
+// copyPtr returns a pointer to a shallow copy of value, or nil if value is nil.
+func copyPtr[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	result := *value
+	return &result
+}
+
+func safeCall(fn func()) (err error) {
+	defer func() {
+		err = toError(recover())
+	}()
+	fn()
+	return
+}
+
+func toError(value any) error {
+	if value == nil {
+		return nil
+	}
+	if e, ok := value.(error); ok {
+		return e
+	}
+	return fmt.Errorf("%v", value)
+}
+
+func mapSeq[T1, T2 any](seq iter.Seq[T1], fn func(T1) T2) iter.Seq[T2] {
+	return func(yield func(T2) bool) {
+		for v := range seq {
+			if !yield(fn(v)) {
+				return
+			}
+		}
+	}
+}
 
 type logWriter struct {
 	logger *log.Logger
@@ -244,25 +293,25 @@ func convertAttribute(value any, attr *metaAttribute, ctx *Context, target refle
 			return result
 		}
 	}
-	if element.Kind() != reflect.Pointer || !info.IsReference() {
+	dynamicObject := element == reflect.TypeFor[Object]()
+	dynamicEnumItem := element == reflect.TypeFor[EnumItem]()
+	if !info.IsReference() || (element.Kind() != reflect.Pointer && !dynamicObject && !dynamicEnumItem) {
 		return convertValue(value, target, attr.Path())
 	}
 	var resolve func(any, string) reflect.Value
 	switch info.Target.Kind() {
 	case meta.KindModel:
+		if dynamicEnumItem {
+			panic(fmt.Errorf("mdd: %s references a model; use mdd.Object", attr.Path()))
+		}
 		var tab *metaTable
-		if ctx.constant {
+		if dynamicObject || ctx.constant {
 			tab = ctx.schema.tables[info.Target.Path()]
-			if tab == nil || (element != reflect.TypeFor[*Object]() && tab.Model.ModelType() != element.Elem()) {
+			if tab == nil || (!dynamicObject && tab.Model.ModelType() != element.Elem()) {
 				panic(fmt.Errorf("mdd: %s references a different model type", attr.Path()))
 			}
-		} else if element == reflect.TypeFor[*Object]() {
-			tab = ctx.schema.tables[info.Target.Path()]
-			if tab == nil || tab.Type != nil {
-				panic(fmt.Errorf("mdd: %s does not reference an unregistered model", attr.Path()))
-			}
 		} else {
-			tab = ctx.metaTableByType(element.Elem())
+			tab = ctx.schema.metaTableByType(element.Elem())
 		}
 		if tab.Model.Path() != info.Target.Path() {
 			panic(fmt.Errorf("mdd: %s references model %q, not %q", attr.Path(), info.Target.Path(), tab.Model.Path()))
@@ -275,17 +324,18 @@ func convertAttribute(value any, attr *metaAttribute, ctx *Context, target refle
 			if id == 0 {
 				return reflect.Zero(element)
 			}
-			obj := ctx.newObject(tab, id)
-			if element == reflect.TypeFor[*Object]() {
-				return reflect.ValueOf(obj)
-			}
-			return reflect.ValueOf(obj.self)
+			return reflect.ValueOf(ctx.newObject(tab, id).self)
 		}
 	case meta.KindEnum:
 		enum := info.Target.(meta.Enum)
-		registered := ctx.schema.config.EnumByType(element.Elem())
-		if registered == nil || registered.Path() != enum.Path() {
-			panic(fmt.Errorf("mdd: enum type %v does not match %s", element, attr.Path()))
+		if dynamicObject {
+			panic(fmt.Errorf("mdd: %s references an enum; use mdd.EnumItem", attr.Path()))
+		}
+		if !dynamicEnumItem {
+			registered := ctx.schema.config.EnumByType(element.Elem())
+			if registered == nil || registered.Path() != enum.Path() {
+				panic(fmt.Errorf("mdd: enum type %v does not match %s", element, attr.Path()))
+			}
 		}
 		resolve = func(item any, path string) reflect.Value {
 			if item == nil {
@@ -437,74 +487,57 @@ func convertBinary(value any, target reflect.Type, name string) reflect.Value {
 	return result
 }
 
-func check(err error) {
-	if err != nil {
-		panic(err)
-	}
+type objectFactory struct {
+	typ         reflect.Type
+	objectField []int
+	enumItem    bool
 }
 
-func must[T any](value T, err error) T {
-	check(err)
-	return value
-}
-
-// copyPtr returns a pointer to a shallow copy of value, or nil if value is nil.
-func copyPtr[T any](value *T) *T {
-	if value == nil {
-		return nil
-	}
-	result := *value
-	return &result
-}
-
-func safeCall(fn func()) (err error) {
-	defer func() {
-		err = toError(recover())
-	}()
-	fn()
-	return
-}
-
-func toError(value any) error {
-	if value == nil {
-		return nil
-	}
-	if e, ok := value.(error); ok {
-		return e
-	}
-	return fmt.Errorf("%v", value)
-}
-
-type baseObject interface {
-	setSelf(any)
-	getSelf() any
-}
-
-func newBaseObject(typ reflect.Type) baseObject {
-	v := reflect.New(typ)
-	base := v.Elem().Field(0).Addr().Interface().(baseObject)
-	base.setSelf(v.Interface())
-	return base
-}
-
-func newModelObject(typ reflect.Type) (*Object, error) {
-	if typ == nil {
-		obj := new(Object)
-		obj.setSelf(obj)
-		return obj, nil
-	}
+func newObjectFactory(typ reflect.Type, isEnum bool) (objectFactory, error) {
 	if typ.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("mdd: invalid model type %v", typ)
+		return objectFactory{}, fmt.Errorf("mdd: invalid model type %v", typ)
 	}
-	model := reflect.New(typ).Interface()
-	marker, ok := model.(meta.ModelObject)
-	if !ok {
-		return nil, fmt.Errorf("mdd: model type %v does not expose an MDD object", typ)
+	fieldType := reflect.TypeFor[Object]()
+	if isEnum {
+		fieldType = reflect.TypeFor[EnumItem]()
 	}
-	obj, ok := marker.MDDObject().(*Object)
-	if !ok || obj == nil {
-		return nil, fmt.Errorf("mdd: model type %v must return a non-nil *mdd.Object", typ)
+	field, ok := typ.FieldByName(fieldType.Name())
+	if !ok || !field.Anonymous || field.Type != fieldType {
+		return objectFactory{}, fmt.Errorf("mdd: type %v must embed %v", typ, fieldType)
 	}
-	obj.setSelf(model)
-	return obj, nil
+	model := reflect.New(typ)
+	embedded, err := model.Elem().FieldByIndexErr(field.Index)
+	if err != nil || !embedded.CanSet() {
+		return objectFactory{}, fmt.Errorf("mdd: cannot initialize the embedded %v of type %v", fieldType, typ)
+	}
+	if !model.Type().Implements(fieldType) {
+		return objectFactory{}, fmt.Errorf("mdd: type %v must implement %v", model.Type(), fieldType)
+	}
+	factory := objectFactory{typ: typ, objectField: field.Index, enumItem: isEnum}
+	obj := new(object)
+	factory.bind(model, embedded, obj)
+	if obj.self.objectCore() != obj {
+		return objectFactory{}, fmt.Errorf("mdd: type %v must expose its initialized %v", typ, fieldType)
+	}
+	return factory, nil
+}
+
+func (f objectFactory) newObject() *object {
+	obj := new(object)
+	if f.typ == nil {
+		obj.self = obj
+		return obj
+	}
+	model := reflect.New(f.typ)
+	f.bind(model, model.Elem().FieldByIndex(f.objectField), obj)
+	return obj
+}
+
+func (f objectFactory) bind(model, embedded reflect.Value, obj *object) {
+	if f.enumItem {
+		embedded.Set(reflect.ValueOf((*enumItem)(obj)))
+	} else {
+		embedded.Set(reflect.ValueOf(obj))
+	}
+	obj.self = model.Interface().(objectValue)
 }

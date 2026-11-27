@@ -167,7 +167,9 @@ decoded values in memory. No collection
 index is implied. Callers constructing driver queries directly should supply
 normalized values; drivers determine their supported operators and values.
 
-`mdd.AttrSet[T](object, name)` builds a set from the attribute's metadata query.
+`ctx.NewAttrSet(object, name)` builds an `*mdd.ObjectSet` from the attribute's
+metadata query. `mdd.AttrSet[T](object, name)` builds a typed set in the object's
+transaction context.
 It evaluates `{...}` expressions against the object using its Go methods and
 stored attributes, parses the result with `xquery`, and translates its
 filters, ordering, limit and offset into a driver query. Each call creates an
@@ -178,6 +180,11 @@ the metadata and adds the required left joins. `Where`, `Filter`, `FindBy` and
 referenced field must be stored in its model's primary table. Collections,
 computed query fields and `select` are not supported and cause a panic. The
 chosen driver can impose additional query restrictions.
+
+For a predefined object, use an active context from the same configuration
+with `ctx.NewAttrSet(object, name)` or `mdd.AttrSet[T](object, name, ctx)`. The
+predefined object supplies template values, and the active context runs the
+query.
 
 Metadata stores template expressions as strings. The first `Application.Open`
 for a configuration compiles and caches model `to_title`, `to_description`, and
@@ -382,7 +389,7 @@ the context prevents further runs; an active callback must handle cancellation
 itself. Stop and wait for cron goroutines before closing the application.
 While waiting for a boundary, cancellation is checked at least every 15 seconds.
 
-Models can likewise embed `mdd.Object` by value. Register each Go
+Models embed the `mdd.Object` interface. Register each Go
 model type and its metadata name at package initialization, then pass the
 application context to `NewSet`:
 
@@ -399,22 +406,33 @@ func (u *User) Context() *Context { return mdd.Ctx[Context](u) }
 ```
 
 For tools that select models at runtime, `ctx.NewSet("user")` (or
-`ctx.NewSet("users")`) returns an `*mdd.ObjectSet`. It supports the same queries
-and operations as a typed set and returns `*mdd.Object`. `set.Model()` returns
-the model metadata. If a Go model type is registered, its hooks and templates
-still run on that model; the dynamic set exposes its embedded object.
+`ctx.NewSet("users")`) returns an `*mdd.ObjectSet`. `Get` and `All` expose
+records as `mdd.Object`, and `Fetch` takes a `func(mdd.Object)` callback.
+The interface contains the original registered model when it implements
+`mdd.Object`, or the runtime's private implementation otherwise. `set.Model()`
+returns the model metadata, and `obj.Meta()` returns it for an individual record.
 
-`user.Context()` returns the original `*Context`. The public methods on
-`*mdd.Object` handle nil receivers. Go dereferences embedded fields
-before calling promoted methods, however, so calling `user.ID()` or
-`user.Context()` on a nil `*User` requires an explicit wrapper. The example
-models define a nil-safe `ID` method. Attribute getters implemented with
-`mdd.Attr` can be chained through nil model pointers.
+```go
+ctx.NewSet("users").Filter("active", true).Fetch(func(user mdd.Object) {
+    fmt.Println(user.UID(), user.Get("login"))
+})
+
+ctx.Users().Filter("active", true).Fetch(func(user *User) {
+    fmt.Println(user.UID(), user.Login())
+})
+```
+
+`Set[T]` uses the same query implementation and exposes records as `*T`.
+
+`user.Context()` returns the original `*Context`. Calling a promoted method
+requires an initialized model. The example models define nil-safe `ID` and
+`Context` methods. Attribute getters implemented with `mdd.Attr` can be
+chained through nil model pointers.
 
 A nil context produces a nil set, and nil set read operations return zero values
-or an empty iterator. The non-generic object state is embedded in the model;
-its context stores pointers to that state without an additional object allocation.
-Models must be used through their original pointers rather than copied by value.
+or an empty iterator. The model's embedded interface points to the state owned
+by the context. Models must be used through their original pointers rather than
+copied by value.
 
 A transaction context retains one model object per model type and record ID.
 `Add`, `Get`, query results, and references return that same object during the
@@ -422,9 +440,8 @@ transaction, so pointer comparison is meaningful within it. Objects obtained
 in different transactions are distinct. The context releases its cache when it
 commits or rolls back; retained objects remain bound to the closed context.
 
-A nil `*mdd.Object` returns zero from `ID`. Binary attributes
-are accessed as byte slices; file
-attributes return a lazy `mdd.File`:
+Binary attributes are accessed as byte slices. File attributes return a lazy
+`mdd.File`:
 
 ```go
 func (u *User) Token() []byte {
@@ -445,15 +462,14 @@ before the transaction ends. The file is tied to its transaction; its source
 may be opened again after reading or closing if it supports reopening.
 
 Model registration associates a Go type with a metadata model for sets and
-reference resolution. Register model types before opening the application.
-`Open` validates each registered model and snapshots its type in the storage
-schema. Models embed `mdd.Object`; it does not have to be the first field.
-The factory creates models through reflection, with additional fields set to
-their zero values. Attribute conversion in `Attr` can also use reflection.
+reference resolution. Models embed `mdd.Object` at any field position.
+`RegisterModel` and `RegisterEnum` validate the embedded interface and cache
+its field path. The factory uses that path to initialize new objects through
+reflection. Additional fields retain their zero values.
 
-An unregistered model uses `*mdd.Object` for references. Read such a reference
-with `mdd.Attr[*mdd.Object]`; its target model is identified by the attribute's
-metadata. `NewSet[T]` still requires a registered model type.
+Read model references dynamically with `mdd.Attr[mdd.Object]` or
+`mdd.Attr[[]mdd.Object]`. The attribute metadata identifies the target model.
+`NewSet[T]` still requires a registered model type.
 
 `mdd.SetAttr` updates an attribute and returns the same model, so typed model
 setters can be chained. See [Transactions](#transactions) for when setters
@@ -575,21 +591,25 @@ type UserType struct { mdd.EnumItem }
 var UserTypeAdmin = mdd.Item[UserType](Meta, "user.type.admin")
 ```
 
+`EnumItem` is a read-only interface with its own `Meta()` method returning
+`meta.Item`. It provides `ID`, `UID`, `Is`, `Name`, `Title`, `String`,
+`Description`, and `Icon`. Templates can read item data through `Get`.
 `RegisterEnum` registers the wrapper type. `Item` can create a shared enum
 value during startup. The first `Open()` initializes any remaining items of
 registered enums. Reading an enum attribute returns the same pointer from
-every context using that metadata, so values can be compared with `==`. Enum
-items provide `ID`, `Name`, `Title`, `Description`, `Icon`, and `Get`. Enum IDs
-in persistent configurations should be explicit and stable.
+every context using that metadata, so values can be compared with `==`.
+Use `mdd.Attr[mdd.EnumItem]` or `mdd.Attr[[]mdd.EnumItem]` to read registered
+enum references dynamically. Enum IDs in persistent configurations should be
+explicit and stable.
 
 Registrations belong to the specific `meta.Config`. They must be completed
 before the first application opens with that configuration. Run registration,
 early `Item()` calls, and the first `Open()` for each configuration sequentially
-during startup, before concurrent use. The first `Open()` builds the Go type
-index from those registrations. Registration panics for
-invalid paths, invalid pointer types, or conflicting registrations. Application
-opening reports an error if a model's `MDDObject()` does not return a non-nil
-`*mdd.Object`.
+during startup, before concurrent use. Registration panics for invalid paths,
+invalid types, or conflicting registrations. The low-level metadata API accepts
+a Go struct type, for example `model.Register(reflect.TypeFor[User]())`. For
+types bound directly through this API, MDD validates the factory when `Item()`
+first uses the type or when `Open()` prepares the schema.
 
 Predefined model items can be declared as shared references:
 
@@ -654,8 +674,8 @@ func (u *User) Login() string {
 With nil-safe accessors, `order.User().Login()` returns an empty string when
 there is no user. A nil context and nil set also allow chained reads such as
 `order.User().Context().Users().First().Login()`. Methods on application model
-wrappers must handle nil receivers explicitly where Go's promoted methods would
-dereference an embedded value. A nil model
+wrappers must handle nil receivers explicitly when they call promoted methods.
+A nil model
 has no metadata, so the helper cannot validate attribute names or target types
 in that case. Model methods that access fields or promoted methods directly
 must handle nil themselves. Operations on a nil set return zero values; they do

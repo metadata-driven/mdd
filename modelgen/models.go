@@ -198,7 +198,7 @@ func (g *generator) model(model meta.Model) error {
 		return err
 	}
 	if set := model.SetName(); set != "" {
-		if method := goName(set); method == "Context" || method == "MDDApp" {
+		if method := goName(set); method == "Context" || method == "MDDApp" || method == "NewAttrSet" {
 			return fmt.Errorf("%s: set %q conflicts with the embedded mdd.Context API", model.Path(), set)
 		}
 		m := methodMember("Context", goName(set), model.Path()+" set", func(f *sourceFile) string {
@@ -259,7 +259,7 @@ func (g *generator) accessors(file *sourceFile, model meta.Model, name, receiver
 		}
 		method := goName(attr.Name())
 		switch method {
-		case "Object", "MDDObject", "MDDContext", "Set":
+		case "Object", "MDDContext", "Set":
 			return fmt.Errorf("%s: accessor %s conflicts with the embedded mdd.Object API", attr.Path(), method)
 		}
 		info := attr.Type()

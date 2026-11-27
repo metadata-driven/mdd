@@ -74,8 +74,8 @@ type Model interface {
 	Node
 
 	ModelType() reflect.Type
-	// Register binds a model Go type during sequential configuration setup.
-	Register(ModelObject) struct{}
+	// Register binds a Go struct type during sequential configuration setup.
+	Register(reflect.Type) struct{}
 
 	// SetName is the canonical name of the model's queryable set, if any.
 	SetName() string
@@ -97,15 +97,10 @@ type Enum interface {
 	Node
 
 	ModelType() reflect.Type
-	// Register binds an enum Go type during sequential configuration setup.
-	Register(ModelObject) struct{}
+	// Register binds a Go struct type during sequential configuration setup.
+	Register(reflect.Type) struct{}
 
 	Items() []Item
-}
-
-// ModelObject identifies a Go model that exposes its MDD object.
-type ModelObject interface {
-	MDDObject() any
 }
 
 type Source interface {

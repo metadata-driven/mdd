@@ -3,6 +3,7 @@ package tests
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -103,8 +104,8 @@ models:
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.LookupModel("event_record").Register((*EventRecord)(nil))
-	cfg.LookupModel("after_only_record").Register((*AfterOnlyRecord)(nil))
+	cfg.LookupModel("event_record").Register(reflect.TypeFor[EventRecord]())
+	cfg.LookupModel("after_only_record").Register(reflect.TypeFor[AfterOnlyRecord]())
 	app, err := mdd.NewApp[EventApp](cfg)
 	if err != nil {
 		t.Fatal(err)

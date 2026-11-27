@@ -79,13 +79,13 @@ func TestEnumIs(t *testing.T) {
 func TestIsNil(t *testing.T) {
 	var user *User
 	var kind *UserType
-	var object *mdd.Object
-	var item *mdd.EnumItem
+	var object mdd.Object
+	var item mdd.EnumItem
 
 	assertEqual(t, mdd.Is(user, UserSuperAdmin), false)
 	assertEqual(t, mdd.Is(kind, UserTypeAdmin), false)
-	assertEqual(t, object.Is(1), false)
-	assertEqual(t, item.Is(UserTypeAdmin), false)
+	assertEqual(t, mdd.Is(object, 1), false)
+	assertEqual(t, mdd.Is(item, UserTypeAdmin), false)
 	assertEqual(t, mdd.Is(UserSuperAdmin, user), false)
 	assertEqual(t, mdd.Is(UserTypeAdmin, kind), false)
 }

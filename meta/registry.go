@@ -19,15 +19,13 @@ func (o *node) LookupEnum(path string) Enum {
 	return nil
 }
 
-func (o *node) Register(object ModelObject) struct{} {
+func (o *node) Register(typ reflect.Type) struct{} {
 	if o.kind != KindModel && o.kind != KindEnum {
 		panic(fmt.Errorf("meta: %q is not a model or enum", o.path))
 	}
-	typ := reflect.TypeOf(object)
-	if typ == nil || typ.Kind() != reflect.Pointer || typ.Elem().Kind() != reflect.Struct {
-		panic(fmt.Errorf("meta: %q requires a pointer to a struct", o.path))
+	if typ == nil || typ.Kind() != reflect.Struct {
+		panic(fmt.Errorf("meta: %q requires a Go struct type", o.path))
 	}
-	typ = typ.Elem()
 	if o.modelType == typ {
 		return struct{}{}
 	}

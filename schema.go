@@ -26,7 +26,8 @@ type schema struct {
 	tablesBySet    map[[2]string]*metaTable // Keyed by set name and source name.
 	prepared       bool
 	ctx            *Context
-	predefined     map[predefinedKey]meta.ModelObject
+	predefined     map[predefinedKey]objectValue
+	factories      map[reflect.Type]objectFactory
 	queries        sync.Map
 	queryTemplates *templateCache
 }
@@ -43,7 +44,11 @@ func schemaByConfig(config meta.Config) *schema {
 	if s := schemas[config]; s != nil {
 		return s
 	}
-	s := &schema{config: config, predefined: make(map[predefinedKey]meta.ModelObject)}
+	s := &schema{
+		config:     config,
+		predefined: make(map[predefinedKey]objectValue),
+		factories:  make(map[reflect.Type]objectFactory),
+	}
 	s.ctx = &Context{schema: s, constant: true}
 	schemas[config] = s
 	return s
@@ -57,20 +62,18 @@ func (s *schema) prepare() error {
 		return fmt.Errorf("convert metadata: %w", err)
 	}
 	for _, model := range s.config.Models() {
-		table := s.tables[model.Name()]
-		typ := model.ModelType()
-		table.Type = typ
-		if typ == nil {
-			continue
-		}
-		if _, err := newModelObject(typ); err != nil {
+		factory, err := s.factoryFor(model, model.ModelType())
+		if err != nil {
 			return fmt.Errorf("schema: model %s: %w", model.Path(), err)
 		}
+		s.tables[model.Name()].factory = factory
 	}
 	if err := s.warmTemplates(); err != nil {
 		return err
 	}
-	s.preparePredefined()
+	if err := s.preparePredefined(); err != nil {
+		return err
+	}
 	s.prepared = true
 	return nil
 }
@@ -78,7 +81,7 @@ func (s *schema) prepare() error {
 func (s *schema) metaTableByType(typ reflect.Type) *metaTable {
 	if s.prepared {
 		if model := s.config.ModelByType(typ); model != nil {
-			if table := s.tables[model.Path()]; table != nil && table.Type == typ {
+			if table := s.tables[model.Path()]; table != nil && table.factory.typ == typ {
 				return table
 			}
 		}
@@ -86,7 +89,24 @@ func (s *schema) metaTableByType(typ reflect.Type) *metaTable {
 	panic(fmt.Errorf("mdd: unknown model type %v", typ))
 }
 
-func (s *schema) getOrCreatePredefined(owner meta.Node, id uint64, create func() meta.ModelObject) meta.ModelObject {
+func (s *schema) factoryFor(owner meta.Node, typ reflect.Type) (objectFactory, error) {
+	if typ == nil {
+		return objectFactory{}, nil
+	}
+	isEnum := owner.Kind() == meta.KindEnum
+	factory, ok := s.factories[typ]
+	if !ok || factory.enumItem != isEnum {
+		var err error
+		factory, err = newObjectFactory(typ, isEnum)
+		if err != nil {
+			return objectFactory{}, err
+		}
+		s.factories[typ] = factory
+	}
+	return factory, nil
+}
+
+func (s *schema) predefinedObject(owner meta.Node, item meta.Item, id uint64, factory objectFactory) objectValue {
 	key := predefinedKey{owner, id}
 	if obj := s.predefined[key]; obj != nil {
 		return obj
@@ -94,20 +114,17 @@ func (s *schema) getOrCreatePredefined(owner meta.Node, id uint64, create func()
 	if s.prepared {
 		panic(fmt.Errorf("mdd: %s-%d is not a predefined object", owner.Path(), id))
 	}
-	obj := create()
-	s.predefined[key] = obj
-	return obj
+	isEnum := owner.Kind() == meta.KindEnum
+	if isEnum && id == 0 {
+		panic(fmt.Errorf("mdd: %s has an invalid zero ID", item.Path()))
+	}
+	obj := factory.newObject()
+	obj.ctx, obj.item, obj.id, obj.loaded = s.ctx, item, id, isEnum
+	s.predefined[key] = obj.self
+	return obj.self
 }
 
-func (s *schema) predefinedModel(model meta.Model, item meta.Item, id uint64) meta.ModelObject {
-	return s.getOrCreatePredefined(model, id, func() meta.ModelObject {
-		obj := must(newModelObject(model.ModelType()))
-		obj.item, obj.id, obj.ctx = item, id, s.ctx
-		return obj.self.(meta.ModelObject)
-	})
-}
-
-func (s *schema) preparePredefined() {
+func (s *schema) preparePredefined() error {
 	rows := make(map[predefinedKey]driver.DataObject)
 	for _, row := range s.items {
 		key := predefinedKey{row.model, row.id}
@@ -127,17 +144,24 @@ func (s *schema) preparePredefined() {
 		}
 	}
 	for _, model := range s.config.Models() {
+		factory := s.tables[model.Name()].factory
 		for _, item := range model.Items() {
 			id := storedScalar[uint64](item.ItemID(), item.Path())
-			s.predefinedModel(model, item, id)
+			s.predefinedObject(model, item, id, factory)
 		}
 	}
 	for _, enum := range s.config.Enums() {
-		if typ := enum.ModelType(); typ != nil {
-			for _, item := range enum.Items() {
-				id := storedScalar[uint64](item.ItemID(), item.Path())
-				s.predefinedEnum(enum, typ, item, id)
-			}
+		typ := enum.ModelType()
+		if typ == nil {
+			continue
+		}
+		factory, err := s.factoryFor(enum, typ)
+		if err != nil {
+			return fmt.Errorf("schema: enum %s: %w", enum.Path(), err)
+		}
+		for _, item := range enum.Items() {
+			id := storedScalar[uint64](item.ItemID(), item.Path())
+			s.predefinedObject(enum, item, id, factory)
 		}
 	}
 	for key, data := range rows {
@@ -147,9 +171,10 @@ func (s *schema) preparePredefined() {
 				data[name] = driver.Cast(nil, attr.column.Type, false)
 			}
 		}
-		obj := s.predefined[key].MDDObject().(*Object)
+		obj := s.predefined[key].objectCore()
 		obj.tab, obj.data, obj.loaded = tab, data, true
 	}
+	return nil
 }
 
 func (s *schema) convertQuery(q *xquery.Query) *driver.Query {
@@ -420,8 +445,8 @@ type metaTable struct {
 	Source      meta.Source
 	Database    *driver.Database
 	Table       *driver.Table
-	Type        reflect.Type
 	Attrs       map[string]*metaAttribute
+	factory     objectFactory
 	storage     []*metaTable
 	created     *metaAttribute
 	updated     *metaAttribute

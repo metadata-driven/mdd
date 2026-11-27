@@ -1,85 +1,78 @@
 package mdd
 
-import (
-	"fmt"
-	"reflect"
-
-	"github.com/metadata-driven/mdd/meta"
-)
+import "github.com/metadata-driven/mdd/meta"
 
 // EnumItem is a shared, immutable item of an enumeration.
-type EnumItem struct{ object Object }
+type EnumItem interface {
+	ID() uint64
+	UID() string
+	Is(values ...any) bool
 
-func (e *EnumItem) enumItemCore() *EnumItem { return e }
+	Name() string
+	Title() string
+	String() string
+	Icon() string
+	Description() string
+	Meta() meta.Item
+	Get(name string) any
 
-// MDDObject returns the internal object of an enumeration item.
-func (e *EnumItem) MDDObject() any {
+	objectValue
+}
+
+type enumItem object
+
+var _ EnumItem = (*enumItem)(nil)
+
+func (e *enumItem) objectCore() *object   { return (*object)(e) }
+func (e *enumItem) ID() uint64            { return e.objectCore().ID() }
+func (e *enumItem) UID() string           { return e.objectCore().UID() }
+func (e *enumItem) Is(values ...any) bool { return e.objectCore().Is(values...) }
+
+func (e *enumItem) Meta() meta.Item {
 	if e == nil {
-		return (*Object)(nil)
-	}
-	return &e.object
-}
-
-func (e *EnumItem) ID() uint64 {
-	if e == nil {
-		return 0
-	}
-	return e.object.ID()
-}
-
-func (e *EnumItem) objectKey() objectKey {
-	if e == nil {
-		return objectKey{}
-	}
-	return e.object.objectKey()
-}
-
-// Is reports whether this enum item matches any supplied ID or item.
-func (e *EnumItem) Is(values ...any) bool {
-	return e != nil && isValues(e, values)
-}
-
-func (e *EnumItem) Name() string {
-	if e == nil || e.object.item == nil {
-		return ""
-	}
-	return e.object.item.Name()
-}
-
-func (e *EnumItem) Title() string {
-	if e == nil || e.object.item == nil {
-		return ""
-	}
-	return e.object.item.Title()
-}
-
-func (e *EnumItem) String() string { return e.Title() }
-
-func (e *EnumItem) Description() string {
-	if e == nil || e.object.item == nil {
-		return ""
-	}
-	return e.object.item.Description()
-}
-
-func (e *EnumItem) Icon() string {
-	if e == nil || e.object.item == nil {
-		return ""
-	}
-	return e.object.item.Icon()
-}
-
-func (e *EnumItem) Get(name string) any {
-	if e == nil || e.object.item == nil {
 		return nil
 	}
-	return enumItemValue(e.object.item, e.object.id, name)
+	return e.item
 }
 
-func enumItemValue(item meta.Item, id uint64, name string) any {
+func (e *enumItem) Name() string {
+	if item := e.Meta(); item != nil {
+		return item.Name()
+	}
+	return ""
+}
+
+func (e *enumItem) Title() string {
+	if item := e.Meta(); item != nil {
+		return item.Title()
+	}
+	return ""
+}
+
+func (e *enumItem) String() string { return e.Title() }
+
+func (e *enumItem) Description() string {
+	if item := e.Meta(); item != nil {
+		return item.Description()
+	}
+	return ""
+}
+
+func (e *enumItem) Icon() string {
+	if item := e.Meta(); item != nil {
+		return item.Icon()
+	}
+	return ""
+}
+
+func (e *enumItem) Get(name string) any {
+	item := e.Meta()
+	if item == nil {
+		return nil
+	}
 	switch name {
 	case "id":
-		return id
+		return e.id
 	case "name":
 		return item.Name()
 	case "title":
@@ -92,33 +85,4 @@ func enumItemValue(item meta.Item, id uint64, name string) any {
 	default:
 		return cloneDataValue(item.Data()[name])
 	}
-}
-
-func (s *schema) newPredefinedEnumItem(typ reflect.Type, item meta.Item, id uint64) meta.ModelObject {
-	if id == 0 {
-		panic(fmt.Errorf("mdd: %s has an invalid zero ID", item.Path()))
-	}
-	value := reflect.New(typ).Interface()
-	model, ok := value.(meta.ModelObject)
-	if !ok {
-		panic(fmt.Errorf("mdd: enum type %v does not expose an MDD object", typ))
-	}
-	core, ok := value.(interface{ enumItemCore() *EnumItem })
-	if !ok {
-		panic(fmt.Errorf("mdd: enum type %v must embed mdd.EnumItem", typ))
-	}
-	obj := core.enumItemCore()
-	if obj == nil || model.MDDObject() != &obj.object {
-		panic(fmt.Errorf("mdd: enum type %v has an invalid MDD object", typ))
-	}
-	obj.object.self, obj.object.id, obj.object.loaded = value, id, true
-	obj.object.ctx = s.ctx
-	obj.object.item = item
-	return model
-}
-
-func (s *schema) predefinedEnum(enum meta.Enum, typ reflect.Type, item meta.Item, id uint64) meta.ModelObject {
-	return s.getOrCreatePredefined(enum, id, func() meta.ModelObject {
-		return s.newPredefinedEnumItem(typ, item, id)
-	})
 }

@@ -2,6 +2,7 @@ package tests
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/metadata-driven/mdd"
@@ -89,8 +90,8 @@ models:
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.LookupModel("user").Register((*User)(nil))
-	cfg.LookupModel("order").Register((*Order)(nil))
+	cfg.LookupModel("user").Register(reflect.TypeFor[User]())
+	cfg.LookupModel("order").Register(reflect.TypeFor[Order]())
 	app, err := mdd.NewApp[App](cfg)
 	if err != nil {
 		t.Fatal(err)
